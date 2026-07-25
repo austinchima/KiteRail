@@ -1,0 +1,9 @@
+web/
+node_modules/
+.git/
+*.exe
+*.md
+LICENSE
+assets/
+docs/
+.agents/

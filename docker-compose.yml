@@ -1,0 +1,54 @@
+version: '3.8'
+
+services:
+  proxy:
+    build:
+      context: ./backend
+      dockerfile: ../Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      KITERAIL_LISTEN_ADDR: ":8080"
+      KITERAIL_NATS_URL: "nats://nats:4222"
+      KITERAIL_POSTGRES_DSN: "postgres://kiterail:kiterail@postgres:5432/kiterail?sslmode=disable"
+      KITERAIL_POLICY_DIR: "/policies"
+      KITERAIL_LOG_LEVEL: "info"
+    volumes:
+      - ./policies:/policies:ro
+    depends_on:
+      nats:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  nats:
+    image: nats:2-alpine
+    command: ["--jetstream", "--store_dir", "/data"]
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    volumes:
+      - nats_data:/data
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: kiterail
+      POSTGRES_PASSWORD: kiterail
+      POSTGRES_DB: kiterail
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kiterail"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  nats_data:
+  pg_data:

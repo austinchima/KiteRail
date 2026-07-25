@@ -1,0 +1,36 @@
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+vendor/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# KiteRail Cloud (private — excluded from public repo)
+web/
+
+# Agent configs
+.agents/
+
+# Environment
+.env
+.env.local
+*.pem
+*.key
+
+# Build artifacts
+backend/server.exe
+dist/
