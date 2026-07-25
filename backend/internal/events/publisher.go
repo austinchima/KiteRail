@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 )
@@ -39,9 +41,10 @@ func New(ctx context.Context, url string) (*Publisher, error) {
 	}
 
 	for _, s := range streams {
-		_, err := js.CreateStream(ctx, jetstream.StreamConfig{
-			Name:     s.Name,
-			Subjects: s.Subjects,
+		_, err := js.CreateOrUpdateStream(ctx, jetstream.StreamConfig{
+			Name:       s.Name,
+			Subjects:   s.Subjects,
+			Duplicates: 2 * time.Minute,
 		})
 		if err != nil && err != jetstream.ErrStreamNameAlreadyInUse {
 			nc.Close()
@@ -58,9 +61,10 @@ func (p *Publisher) publish(ctx context.Context, subject string, event interface
 		return fmt.Errorf("failed to marshal event: %w", err)
 	}
 
-	_, err = p.js.Publish(ctx, subject, data)
+	msgID := uuid.New().String()
+	_, err = p.js.Publish(ctx, subject, data, jetstream.WithMsgID(msgID))
 	if err != nil {
-		return fmt.Errorf("failed to publish: %w", err)
+		return fmt.Errorf("failed to publish to %s: %w", subject, err)
 	}
 	return nil
 }

@@ -68,7 +68,7 @@ func calculateHash(entry LedgerEntry) string {
 
 // Append appends a new entry to the ledger.
 func (s *Store) Append(ctx context.Context, entry LedgerEntry) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
 	if err != nil {
 		return fmt.Errorf("failed to begin tx: %w", err)
 	}
@@ -76,7 +76,7 @@ func (s *Store) Append(ctx context.Context, entry LedgerEntry) error {
 
 	var prevHash string
 	var seqNum int
-	err = tx.QueryRowContext(ctx, "SELECT COALESCE(hash, ''), COALESCE(seq_num, 0) FROM ledger ORDER BY seq_num DESC LIMIT 1").Scan(&prevHash, &seqNum)
+	err = tx.QueryRowContext(ctx, "SELECT COALESCE(hash, ''), COALESCE(seq_num, 0) FROM ledger ORDER BY seq_num DESC LIMIT 1 FOR UPDATE").Scan(&prevHash, &seqNum)
 	if err != nil && err != sql.ErrNoRows {
 		return fmt.Errorf("failed to get previous hash: %w", err)
 	}

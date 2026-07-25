@@ -2,7 +2,7 @@
 
 Inline compliance proxy for autonomous AI agents
 
-![Go](https://img.shields.io/badge/Go-1.23-00ADD8?logo=go) ![License](https://img.shields.io/badge/License-Apache_2.0-blue) ![OPA](https://img.shields.io/badge/Policy-OPA_Rego-7d9fc3) ![NATS](https://img.shields.io/badge/Events-NATS_JetStream-27aae1)
+![Go](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go) ![License](https://img.shields.io/badge/License-Apache_2.0-blue) ![OPA](https://img.shields.io/badge/Policy-OPA_Rego-7d9fc3) ![NATS](https://img.shields.io/badge/Events-NATS_JetStream-27aae1)
 
 ## The Problem
 
@@ -26,8 +26,7 @@ flowchart LR
 - **OPA Policy Engine** — Declarative Rego rules, hot-reload support, completely GitOps friendly.
 - **Human-in-the-Loop** — Quarantine queue for payloads flagged as high-risk, pending human approval.
 - **NATS JetStream** — Durable event streaming providing at-least-once delivery for audit logs and quarantine events.
-- **Audit Ledger** — Hash-chained, tamper-evident ledger backed by PostgreSQL for undeniable compliance records.
-- **PII/PCI Redaction** — Regex-based masking of sensitive data (SSNs, credit cards) in outbound payloads before they reach external systems.
+- **Audit Ledger** — Hash-chained, tamper-detectable audit log backed by PostgreSQL with serial isolation for ordered compliance records.
 
 ## Quick Start
 
@@ -45,7 +44,7 @@ curl http://localhost:8080/api/v1/health
 # Send a test MCP request through the proxy
 curl -X POST http://localhost:8080/ \
   -H 'Content-Type: application/json' \
-  -d '{"jsonrpc": "2.0", "method": "stripe.charge.refund", "params": {"amount": 1500}, "id": 1}'
+  -d '{"jsonrpc": "2.0", "method": "tools/call", "params": {"name": "stripe.charge.refund", "arguments": {"amount": 1500}}, "id": 1}'
 # → Returns 202 Quarantined (exceeds $1,000 threshold)
 ```
 
@@ -63,13 +62,13 @@ default quarantine := false
 
 # Allow all read-only methods
 allow {
-    input.method == "stripe.charge.retrieve"
+    input.tool == "stripe.charge.retrieve"
 }
 
 # Quarantine large refunds for human review
 quarantine {
-    input.method == "stripe.charge.refund"
-    input.params.amount > 1000
+    input.tool == "stripe.charge.refund"
+    input.arguments.amount > 1000
 }
 ```
 
@@ -84,6 +83,7 @@ KiteRail is configured entirely via environment variables.
 | `KITERAIL_POLICY_DIR` | Directory containing `.rego` policies | `./policies` |
 | `KITERAIL_NATS_URL` | URL for the NATS JetStream server | `nats://localhost:4222` |
 | `KITERAIL_DB_DSN` | PostgreSQL connection string | `postgres://user:pass@localhost:5432/kiterail?sslmode=disable` |
+| `KITERAIL_API_KEYS` | Comma-separated `token:agent_id` pairs for proxy auth | (none — proxy rejects all if unset) |
 
 ## Architecture
 
@@ -93,6 +93,7 @@ KiteRail's codebase is structured around distinct internal packages:
 - `internal/opa`: Integration with the Open Policy Agent engine for evaluating requests against Rego policies.
 - `internal/events`: NATS JetStream publisher for asynchronous event handling.
 - `internal/quarantine`: Manages the lifecycle of requests held for Human-in-the-Loop review.
+- `internal/quarantine/handler`: REST API for listing, approving, and denying quarantined requests.
 - `internal/ledger`: Handles the hash-chained, Postgres-backed tamper-evident audit log.
 
 ## Cloud Dashboard
