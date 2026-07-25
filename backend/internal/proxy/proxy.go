@@ -15,10 +15,11 @@ import (
 
 // EvalInput represents the payload evaluated by the OPA engine.
 type EvalInput struct {
-	Method    string          `json:"method"`
-	Params    json.RawMessage `json:"params"`
-	Agent     string          `json:"agent"`
-	Timestamp time.Time       `json:"timestamp"`
+	Tool       string                 `json:"tool"`
+	Arguments  map[string]interface{} `json:"arguments"`
+	Agent      string                 `json:"agent"`
+	Timestamp  time.Time              `json:"timestamp"`
+	RawMethod  string                 `json:"raw_method"`
 }
 
 // ProxyDecision represents the result of the policy evaluation.
@@ -105,13 +106,39 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	
-	paramsBytes, _ := json.Marshal(paramsRaw)
+	var tool string
+	var arguments map[string]interface{}
+
+	if method == "tools/call" {
+		// MCP tool invocation — extract params.name and params.arguments
+		paramsMap, ok := paramsRaw.(map[string]interface{})
+		if !ok {
+			h.reverseProxy.ServeHTTP(w, r)
+			return
+		}
+		tool, _ = paramsMap["name"].(string)
+		if args, ok := paramsMap["arguments"].(map[string]interface{}); ok {
+			arguments = args
+		}
+	} else {
+		// Non-MCP JSON-RPC — use method directly as tool name
+		tool = method
+		if pm, ok := paramsRaw.(map[string]interface{}); ok {
+			arguments = pm
+		}
+	}
+
+	if tool == "" {
+		h.reverseProxy.ServeHTTP(w, r)
+		return
+	}
 
 	input := EvalInput{
-		Method:    method,
-		Params:    paramsBytes,
-		Agent:     "unknown", // Could extract from headers
+		Tool:      tool,
+		Arguments: arguments,
+		Agent:     AgentFromContext(r.Context()),
 		Timestamp: time.Now(),
+		RawMethod: method,
 	}
 
 	start := time.Now()
@@ -146,4 +173,50 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.logger.Error("Unknown action", zap.String("action", decision.Action))
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 	}
+}
+
+// AuthMiddleware validates bearer tokens on incoming requests.
+func AuthMiddleware(apiKeys map[string]string, logger *zap.Logger, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Health endpoint is public
+		if r.URL.Path == "/api/v1/health" {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		auth := r.Header.Get("Authorization")
+		if auth == "" {
+			http.Error(w, `{"error": "missing Authorization header"}`, http.StatusUnauthorized)
+			return
+		}
+
+		const prefix = "Bearer "
+		if len(auth) < len(prefix) || auth[:len(prefix)] != prefix {
+			http.Error(w, `{"error": "invalid Authorization format, expected Bearer token"}`, http.StatusUnauthorized)
+			return
+		}
+
+		token := auth[len(prefix):]
+		agentID, ok := apiKeys[token]
+		if !ok {
+			logger.Warn("rejected unauthorized request", zap.String("token_prefix", token[:min(8, len(token))]))
+			http.Error(w, `{"error": "invalid API key"}`, http.StatusForbidden)
+			return
+		}
+
+		// Inject agent identity into request context
+		ctx := context.WithValue(r.Context(), agentContextKey, agentID)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+type contextKey string
+const agentContextKey contextKey = "agent_id"
+
+// AgentFromContext extracts the agent ID from the request context.
+func AgentFromContext(ctx context.Context) string {
+	if v, ok := ctx.Value(agentContextKey).(string); ok {
+		return v
+	}
+	return "unknown"
 }

@@ -3,6 +3,7 @@ module github.com/austinchima/kiterail
 go 1.26.0
 
 require (
+	github.com/google/uuid v1.6.0
 	github.com/lib/pq v1.12.3
 	github.com/nats-io/nats.go v1.52.0
 	github.com/open-policy-agent/opa v1.18.2
@@ -16,7 +17,6 @@ require (
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.1 // indirect
 	github.com/gobwas/glob v0.2.3 // indirect
 	github.com/goccy/go-json v0.10.6 // indirect
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/klauspost/compress v1.18.5 // indirect
 	github.com/lestrrat-go/blackmagic v1.0.4 // indirect
 	github.com/lestrrat-go/dsig v1.2.1 // indirect

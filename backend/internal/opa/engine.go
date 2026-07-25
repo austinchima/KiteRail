@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 
+	"sync"
+
 	"github.com/open-policy-agent/opa/v1/rego"
 	"github.com/austinchima/kiterail/internal/proxy"
 )
@@ -13,6 +15,7 @@ import (
 type Engine struct {
 	policyDir string
 	query     rego.PreparedEvalQuery
+	mu        sync.RWMutex
 }
 
 // New creates a new Engine and loads policies from the specified directory.
@@ -48,20 +51,27 @@ func (e *Engine) Reload(ctx context.Context) error {
 		return fmt.Errorf("failed to prepare rego query: %w", err)
 	}
 
+	e.mu.Lock()
 	e.query = query
+	e.mu.Unlock()
 	return nil
 }
 
 // Evaluate evaluates the input against the loaded policies.
 func (e *Engine) Evaluate(ctx context.Context, input proxy.EvalInput) (proxy.ProxyDecision, error) {
 	inputMap := map[string]interface{}{
-		"method":    input.Method,
-		"params":    string(input.Params),
-		"agent":     input.Agent,
-		"timestamp": input.Timestamp,
+		"tool":       input.Tool,
+		"arguments":  input.Arguments,
+		"agent":      input.Agent,
+		"timestamp":  input.Timestamp,
+		"raw_method": input.RawMethod,
 	}
 
-	rs, err := e.query.Eval(ctx, rego.EvalInput(inputMap))
+	e.mu.RLock()
+	query := e.query
+	e.mu.RUnlock()
+
+	rs, err := query.Eval(ctx, rego.EvalInput(inputMap))
 	if err != nil {
 		return proxy.ProxyDecision{}, fmt.Errorf("evaluation failed: %w", err)
 	}
