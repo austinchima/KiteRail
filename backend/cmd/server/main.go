@@ -18,8 +18,10 @@ import (
 	"github.com/austinchima/kiterail/internal/events"
 	"github.com/austinchima/kiterail/internal/ledger"
 	"github.com/austinchima/kiterail/internal/opa"
+	"github.com/austinchima/kiterail/internal/policy"
 	"github.com/austinchima/kiterail/internal/proxy"
 	"github.com/austinchima/kiterail/internal/quarantine"
+	"github.com/austinchima/kiterail/internal/dashboard"
 )
 
 var (
@@ -99,6 +101,25 @@ func main() {
 	}
 	defer pub.Close()
 
+	// Connect to NATS (Subscriber)
+	var sub *events.Subscriber
+	for i := 0; i < 5; i++ {
+		sub, err = events.NewSubscriber(ctx, cfg.NatsURL)
+		if err == nil {
+			break
+		}
+		logger.Warn("Failed to connect NATS subscriber, retrying...", zap.Error(err))
+		time.Sleep(2 * time.Second)
+	}
+	if err != nil {
+		logger.Fatal("Failed to connect NATS subscriber after 5 attempts", zap.Error(err))
+	}
+	defer sub.Close()
+
+	if err := sub.Start(ctx); err != nil {
+		logger.Fatal("Failed to start NATS subscriber", zap.Error(err))
+	}
+
 	// Init OPA
 	engine, err := opa.New(ctx, cfg.PolicyDir)
 	if err != nil {
@@ -116,6 +137,11 @@ func main() {
 		logger.Fatal("Failed to initialize ledger store", zap.Error(err))
 	}
 
+	pStore, err := policy.New(db)
+	if err != nil {
+		logger.Fatal("Failed to initialize policy store", zap.Error(err))
+	}
+
 	// Quarantine Handler
 	quarantineHandler := quarantine.NewHandler(qStore, pub, lStore, logger)
 
@@ -123,10 +149,19 @@ func main() {
 	ledgerHandler := ledger.NewHandler(lStore, logger)
 
 	// Proxy Handler
-	proxyHandler, err := proxy.NewHandler(logger, cfg.TargetURL, engine, pub, qStore, lStore)
+	proxyHandler, err := proxy.NewHandler(logger, cfg.TargetURL, engine, pub, qStore, lStore, pStore)
 	if err != nil {
 		logger.Fatal("Failed to create proxy handler", zap.Error(err))
 	}
+
+	// Policy Handler
+	policyHandler := policy.NewHandler(pStore, logger)
+
+	// Dashboard Handler
+	dashboardHandler := dashboard.NewHandler(lStore, qStore, logger)
+
+	// SSE Handler
+	sseHandler := proxy.NewSSEHandler(sub)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v1/health", func(w http.ResponseWriter, r *http.Request) {
@@ -146,9 +181,18 @@ func main() {
 	mux.Handle("/api/v1/quarantine", stripQuarantine)
 	mux.Handle("/api/v1/quarantine/", stripQuarantine)
 
+	mux.Handle("/api/v1/topology/stream", sseHandler)
+
 	stripLedger := http.StripPrefix("/api/v1/ledger", ledgerHandler)
 	mux.Handle("/api/v1/ledger", stripLedger)
 	mux.Handle("/api/v1/ledger/", stripLedger)
+	
+	stripPolicy := http.StripPrefix("/api/v1/policies", policyHandler)
+	mux.Handle("/api/v1/policies", stripPolicy)
+	mux.Handle("/api/v1/policies/", stripPolicy)
+
+	mux.Handle("/api/v1/dashboard/stats", dashboardHandler)
+
 	mux.Handle("/", proxyHandler)
 
 	// Wrap mux: CORS (outermost) -> Auth -> Mux

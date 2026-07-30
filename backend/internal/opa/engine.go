@@ -60,11 +60,12 @@ func (e *Engine) Reload(ctx context.Context) error {
 // Evaluate evaluates the input against the loaded policies.
 func (e *Engine) Evaluate(ctx context.Context, input proxy.EvalInput) (proxy.ProxyDecision, error) {
 	inputMap := map[string]interface{}{
-		"tool":       input.Tool,
-		"arguments":  input.Arguments,
-		"agent":      input.Agent,
-		"timestamp":  input.Timestamp,
-		"raw_method": input.RawMethod,
+		"tool":             input.Tool,
+		"arguments":        input.Arguments,
+		"agent":            input.Agent,
+		"timestamp":        input.Timestamp,
+		"raw_method":       input.RawMethod,
+		"enabled_policies": input.EnabledPolicies,
 	}
 
 	e.mu.RLock()
