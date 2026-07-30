@@ -1,0 +1,22 @@
+# KiteRail Configuration
+
+# Address to listen on
+listen_addr: ":8080"
+
+# Target API URL (e.g., your actual internal service)
+target_url: "http://localhost:8081"
+
+# Directory containing OPA Rego policies
+policy_dir: "./policies"
+
+# PostgreSQL connection string
+postgres_dsn: "postgres://postgres:postgres@localhost:5432/kiterail?sslmode=disable"
+
+# NATS JetStream URL
+nats_url: "nats://localhost:4222"
+
+# API Keys mapped to specific Agent IDs
+# Format: "token:agent_id"
+api_keys:
+  "sk_dev_123": "agent_alpha"
+  "sk_dev_456": "agent_beta"

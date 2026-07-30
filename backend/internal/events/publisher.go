@@ -84,6 +84,11 @@ func (p *Publisher) PublishTelemetry(ctx context.Context, event interface{}) err
 	return p.publish(ctx, "kiterail.telemetry.metrics", event)
 }
 
+// IsHealthy checks if the NATS connection is active.
+func (p *Publisher) IsHealthy() bool {
+	return p.nc != nil && p.nc.IsConnected()
+}
+
 // Close closes the NATS connection.
 func (p *Publisher) Close() error {
 	return p.nc.Drain()

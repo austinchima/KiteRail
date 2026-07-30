@@ -50,11 +50,11 @@ func New(db *sql.DB) (*Store, error) {
 }
 
 // Create inserts a quarantined payload.
-func (s *Store) Create(ctx context.Context, payload []byte) (string, error) {
+func (s *Store) Create(ctx context.Context, agentID, toolName string, payload []byte) (string, error) {
 	var id string
 	err := s.db.QueryRowContext(ctx,
-		"INSERT INTO quarantine (payload, status, created_at) VALUES ($1, $2, $3) RETURNING id::text",
-		payload, "pending", time.Now(),
+		"INSERT INTO quarantine (agent_id, tool_name, payload, status, created_at) VALUES ($1, $2, $3, $4, $5) RETURNING id::text",
+		agentID, toolName, payload, "pending", time.Now(),
 	).Scan(&id)
 	if err != nil {
 		return "", fmt.Errorf("failed to insert quarantine entry: %w", err)

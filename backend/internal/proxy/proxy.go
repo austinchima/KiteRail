@@ -3,6 +3,8 @@ package proxy
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -11,6 +13,8 @@ import (
 	"time"
 
 	"go.uber.org/zap"
+
+	"github.com/austinchima/kiterail/internal/ledger"
 )
 
 // EvalInput represents the payload evaluated by the OPA engine.
@@ -38,11 +42,18 @@ type OPAEngine interface {
 // EventPublisher defines the interface for publishing events.
 type EventPublisher interface {
 	PublishTelemetry(ctx context.Context, event interface{}) error
+	PublishAudit(ctx context.Context, event interface{}) error
+	PublishQuarantine(ctx context.Context, event interface{}) error
 }
 
 // QuarantineStore defines the interface for the quarantine store.
 type QuarantineStore interface {
-	Create(ctx context.Context, payload []byte) (string, error)
+	Create(ctx context.Context, agentID, toolName string, payload []byte) (string, error)
+}
+
+// LedgerStore defines the interface for appending ledger audit entries.
+type LedgerStore interface {
+	Append(ctx context.Context, entry ledger.LedgerEntry) error
 }
 
 // Handler is the reverse proxy HTTP handler.
@@ -52,11 +63,12 @@ type Handler struct {
 	engine          OPAEngine
 	publisher       EventPublisher
 	quarantineStore QuarantineStore
+	ledgerStore     LedgerStore
 	reverseProxy    *httputil.ReverseProxy
 }
 
-// New creates a new proxy handler.
-func New(logger *zap.Logger, targetURL string, engine OPAEngine, publisher EventPublisher, store QuarantineStore) (*Handler, error) {
+// NewHandler creates a new proxy handler.
+func NewHandler(logger *zap.Logger, targetURL string, engine OPAEngine, publisher EventPublisher, store QuarantineStore, lStore LedgerStore) (*Handler, error) {
 	u, err := url.Parse(targetURL)
 	if err != nil {
 		return nil, err
@@ -70,6 +82,7 @@ func New(logger *zap.Logger, targetURL string, engine OPAEngine, publisher Event
 		engine:          engine,
 		publisher:       publisher,
 		quarantineStore: store,
+		ledgerStore:     lStore,
 		reverseProxy:    rp,
 	}, nil
 }
@@ -154,18 +167,69 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	decision.LatencyMs = latency
 	h.logger.Info("Proxy decision", zap.Any("decision", decision))
 
+	hashSum := sha256.Sum256(body)
+	payloadHash := hex.EncodeToString(hashSum[:])
+
+	if h.ledgerStore != nil {
+		entry := ledger.LedgerEntry{
+			Timestamp:   time.Now(),
+			Agent:       input.Agent,
+			Tool:        input.Tool,
+			Decision:    decision.Action,
+			PolicyRule:  decision.Rule,
+			PayloadHash: payloadHash,
+		}
+		if err := h.ledgerStore.Append(r.Context(), entry); err != nil {
+			h.logger.Error("Failed to write to ledger", zap.Error(err))
+		}
+	}
+
 	switch decision.Action {
 	case "allow":
+		if h.publisher != nil {
+			if err := h.publisher.PublishAudit(r.Context(), map[string]interface{}{
+				"action":    "allow",
+				"agent":     input.Agent,
+				"tool":      input.Tool,
+				"rule":      decision.Rule,
+				"timestamp": time.Now(),
+			}); err != nil {
+				h.logger.Error("Failed to publish audit event", zap.Error(err))
+			}
+		}
 		h.reverseProxy.ServeHTTP(w, r)
 	case "deny":
+		if h.publisher != nil {
+			if err := h.publisher.PublishAudit(r.Context(), map[string]interface{}{
+				"action":      "deny",
+				"agent":       input.Agent,
+				"tool":        input.Tool,
+				"rule":        decision.Rule,
+				"explanation": decision.Explanation,
+				"timestamp":   time.Now(),
+			}); err != nil {
+				h.logger.Error("Failed to publish audit event", zap.Error(err))
+			}
+		}
 		w.WriteHeader(http.StatusForbidden)
 		json.NewEncoder(w).Encode(map[string]string{"error": "Denied by policy", "explanation": decision.Explanation})
 	case "quarantine":
-		id, err := h.quarantineStore.Create(r.Context(), body)
+		id, err := h.quarantineStore.Create(r.Context(), input.Agent, input.Tool, body)
 		if err != nil {
 			h.logger.Error("Failed to store quarantine", zap.Error(err))
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			return
+		}
+		if h.publisher != nil {
+			if err := h.publisher.PublishQuarantine(r.Context(), map[string]interface{}{
+				"quarantine_id": id,
+				"agent":         input.Agent,
+				"tool":          input.Tool,
+				"rule":          decision.Rule,
+				"timestamp":     time.Now(),
+			}); err != nil {
+				h.logger.Error("Failed to publish quarantine event", zap.Error(err))
+			}
 		}
 		w.WriteHeader(http.StatusAccepted)
 		json.NewEncoder(w).Encode(map[string]string{"quarantine_id": id, "status": "quarantined"})
