@@ -27,6 +27,21 @@ var (
 	startTime = time.Now()
 )
 
+func corsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With")
+
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
 func main() {
 	configPath := flag.String("config", "", "Path to config file")
 	port := flag.String("port", "", "Override listen address")
@@ -100,10 +115,15 @@ func main() {
 	if err != nil {
 		logger.Fatal("Failed to initialize ledger store", zap.Error(err))
 	}
-	_ = lStore // prevent unused var
 
-	// Proxy
-	proxyHandler, err := proxy.New(logger, cfg.TargetURL, engine, pub, qStore)
+	// Quarantine Handler
+	quarantineHandler := quarantine.NewHandler(qStore, pub, lStore, logger)
+
+	// Ledger Handler
+	ledgerHandler := ledger.NewHandler(lStore, logger)
+
+	// Proxy Handler
+	proxyHandler, err := proxy.NewHandler(logger, cfg.TargetURL, engine, pub, qStore, lStore)
 	if err != nil {
 		logger.Fatal("Failed to create proxy handler", zap.Error(err))
 	}
@@ -112,20 +132,32 @@ func main() {
 	mux.HandleFunc("/api/v1/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"status": "ok",
-			"version": version,
+			"status":         "ok",
+			"version":        version,
 			"uptime_seconds": time.Since(startTime).Seconds(),
 			"services": map[string]bool{
 				"postgres": db.PingContext(ctx) == nil,
-				"nats": pub != nil, // Would ideally check active connection
+				"nats":     pub != nil && pub.IsHealthy(),
 			},
 		})
 	})
+
+	stripQuarantine := http.StripPrefix("/api/v1/quarantine", quarantineHandler)
+	mux.Handle("/api/v1/quarantine", stripQuarantine)
+	mux.Handle("/api/v1/quarantine/", stripQuarantine)
+
+	stripLedger := http.StripPrefix("/api/v1/ledger", ledgerHandler)
+	mux.Handle("/api/v1/ledger", stripLedger)
+	mux.Handle("/api/v1/ledger/", stripLedger)
 	mux.Handle("/", proxyHandler)
+
+	// Wrap mux: CORS (outermost) -> Auth -> Mux
+	authenticatedHandler := proxy.AuthMiddleware(cfg.APIKeys, logger, mux)
+	finalHandler := corsMiddleware(authenticatedHandler)
 
 	srv := &http.Server{
 		Addr:    cfg.ListenAddr,
-		Handler: mux,
+		Handler: finalHandler,
 	}
 
 	go func() {
@@ -137,13 +169,13 @@ func main() {
 
 	<-ctx.Done()
 	logger.Info("Shutting down gracefully...")
-	
+
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownCancel()
-	
+
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		logger.Error("Failed to shutdown server gracefully", zap.Error(err))
 	}
-	
+
 	logger.Info("Shutdown complete")
 }
