@@ -2,29 +2,38 @@
 
 Inline compliance proxy for autonomous AI agents
 
-![Go](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go) ![License](https://img.shields.io/badge/License-Apache_2.0-blue) ![OPA](https://img.shields.io/badge/Policy-OPA_Rego-7d9fc3) ![NATS](https://img.shields.io/badge/Events-NATS_JetStream-27aae1)
+![Go](https://img.shields.io/badge/Go-1.22%2B-00ADD8?logo=go) ![License](https://img.shields.io/badge/License-Apache_2.0-blue) ![OPA](https://img.shields.io/badge/Policy-OPA_Rego-7d9fc3) ![NATS](https://img.shields.io/badge/Events-NATS_JetStream-27aae1)
 
 ## The Problem
 
-Autonomous AI agents calling real-world APIs (payments, banking, databases) introduce significant uncontrolled risk. Regulations such as the EU AI Act, SOX, and PCI-DSS increasingly mandate human oversight for high-risk AI decisions. KiteRail provides a safety layer between your AI agents and your internal systems, ensuring compliance without sacrificing automation speed.
+Autonomous AI agents calling real-world APIs (payments, infrastructure, healthcare, databases) introduce significant uncontrolled risk. Regulations such as the EU AI Act, SOX, HIPAA, and PCI-DSS increasingly mandate human oversight for high-risk AI decisions. 
+
+KiteRail provides a domain-agnostic safety layer between your AI agents and internal systems. While Fintech is the primary reference implementation, KiteRail's policy model extends seamlessly to DevOps/Cloud infrastructure (`kubectl`, `terraform`), Healthcare EHRs, and Enterprise HR/ERP operations.
 
 ## How It Works
 
 ```mermaid
 flowchart LR
     A[AI Agent] --> B[KiteRail Proxy]
-    B --> C{OPA Policy Eval}
-    C -->|ALLOW| D[Target MCP Server]
-    C -->|DENY| E[Block + Log]
-    C -->|QUARANTINE| F[NATS JetStream]
-    F --> G[HITL Inbox + Audit Ledger]
+    B --> C{OPA Policy Engine}
+    
+    C -->|ALLOW| D[Target API Server]
+    C -->|DENY| E[Block Request]
+    C -->|QUARANTINE| F[Quarantine Store]
+    
+    F --> I[HITL Approval Inbox]
+    I -->|APPROVE| D
+    I -->|REJECT| E
+    
+    D & E & F & I --> G[NATS JetStream]
+    G --> H[(Immutable Audit Ledger)]
 ```
 
 ## Features
 
-- **Inline MCP Proxy** — Sub-5ms interception, requires no agent code changes.
+- **Inline MCP Proxy** — Designed for sub-5ms low-latency interception; requires zero agent code modifications.
 - **OPA Policy Engine** — Declarative Rego rules, hot-reload support, completely GitOps friendly.
-- **Human-in-the-Loop** — Quarantine queue for payloads flagged as high-risk, pending human approval.
+- **Human-in-the-Loop** — Quarantine queue for payloads flagged as high-risk, pending human review & token injection.
 - **NATS JetStream** — Durable event streaming providing at-least-once delivery for audit logs and quarantine events.
 - **Audit Ledger** — Hash-chained, tamper-detectable audit log backed by PostgreSQL with serial isolation for ordered compliance records.
 
@@ -43,6 +52,7 @@ curl http://localhost:8080/api/v1/health
 
 # Send a test MCP request through the proxy
 curl -X POST http://localhost:8080/ \
+  -H 'Authorization: Bearer sk_dev_123' \
   -H 'Content-Type: application/json' \
   -d '{"jsonrpc": "2.0", "method": "tools/call", "params": {"name": "stripe.charge.refund", "arguments": {"amount": 1500}}, "id": 1}'
 # → Returns 202 Quarantined (exceeds $1,000 threshold)
@@ -50,23 +60,34 @@ curl -X POST http://localhost:8080/ \
 
 ## Writing Policies
 
-KiteRail uses Open Policy Agent (OPA) for policy evaluation. You define rules in Rego. By default, rules are loaded from the `policies/` directory.
+KiteRail uses Open Policy Agent (OPA) for policy evaluation. Rules return a structured `decision` object containing `action` (`allow`, `deny`, or `quarantine`), `rule`, and `explanation`.
 
 Example policy (`policies/stripe.rego`):
 
 ```rego
-package kiterail.mcp
+package kiterail.authz
 
-default allow := false
-default quarantine := false
+default decision = {
+    "action": "deny",
+    "rule": "default_deny",
+    "explanation": "Action strictly blocked by default policy"
+}
 
-# Allow all read-only methods
-allow {
+# Allow read-only operations
+decision = {
+    "action": "allow",
+    "rule": "allow_read_only",
+    "explanation": "Read-only operation allowed"
+} {
     input.tool == "stripe.charge.retrieve"
 }
 
 # Quarantine large refunds for human review
-quarantine {
+decision = {
+    "action": "quarantine",
+    "rule": "quarantine_high_value_refund",
+    "explanation": "Stripe refunds over $1,000 require human review"
+} {
     input.tool == "stripe.charge.refund"
     input.arguments.amount > 1000
 }
@@ -74,31 +95,33 @@ quarantine {
 
 ## Configuration
 
-KiteRail is configured entirely via environment variables.
+KiteRail is configured via environment variables or a `kiterail.yaml` file.
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `KITERAIL_LISTEN_ADDR` | The address the proxy listens on | `:8080` |
-| `KITERAIL_TARGET_URL` | The upstream MCP server URL | `http://localhost:3000` |
+| `KITERAIL_LISTEN_ADDR` | Address the proxy listens on | `:8080` |
+| `KITERAIL_TARGET_URL` | Upstream target server URL | `http://localhost:8081` |
 | `KITERAIL_POLICY_DIR` | Directory containing `.rego` policies | `./policies` |
-| `KITERAIL_NATS_URL` | URL for the NATS JetStream server | `nats://localhost:4222` |
-| `KITERAIL_DB_DSN` | PostgreSQL connection string | `postgres://user:pass@localhost:5432/kiterail?sslmode=disable` |
-| `KITERAIL_API_KEYS` | Comma-separated `token:agent_id` pairs for proxy auth | (none — proxy rejects all if unset) |
+| `KITERAIL_NATS_URL` | URL for NATS JetStream server | `nats://localhost:4222` |
+| `KITERAIL_POSTGRES_DSN` | PostgreSQL connection DSN string | `postgres://kiterail:kiterail@localhost:5432/kiterail?sslmode=disable` |
+| `KITERAIL_API_KEYS` | Comma-separated `token:agent_id` pairs for proxy auth | (none — proxy rejects requests if unset) |
 
 ## Architecture
 
-KiteRail's codebase is structured around distinct internal packages:
+KiteRail's codebase is structured around distinct internal Go packages:
 
-- `internal/proxy`: The core HTTP/WebSocket proxy that intercepts MCP traffic.
-- `internal/opa`: Integration with the Open Policy Agent engine for evaluating requests against Rego policies.
-- `internal/events`: NATS JetStream publisher for asynchronous event handling.
+- `internal/proxy`: The core HTTP proxy intercepting MCP & API traffic with bearer auth middleware.
+- `internal/opa`: Integration with the Open Policy Agent engine evaluating requests against Rego decision rules.
+- `internal/events`: NATS JetStream publisher for durable asynchronous event delivery.
 - `internal/quarantine`: Manages the lifecycle of requests held for Human-in-the-Loop review.
-- `internal/quarantine/handler`: REST API for listing, approving, and denying quarantined requests.
-- `internal/ledger`: Handles the hash-chained, Postgres-backed tamper-evident audit log.
+- `internal/quarantine/handler`: REST API for listing, approving, and denying quarantined items.
+- `internal/ledger`: Hash-chained, Postgres-backed tamper-evident audit log handler.
 
-## Cloud Dashboard
+## Cloud Dashboard (Planned Managed Service)
 
-KiteRail Cloud provides a managed React dashboard featuring a Human-in-the-Loop inbox, topology visualization, and SIEM export capabilities. Learn more at [kiterail.dev](https://kiterail.dev).
+KiteRail Cloud (planned enterprise service) will provide a managed multi-tenant dashboard featuring a real-time Human-in-the-Loop inbox, topology visualization, RBAC, and SIEM export capabilities (Splunk / Datadog). 
+
+For enterprise inquiries, custom deployments, or early access interest, please open a GitHub Discussion or reach out via repository issues.
 
 ## Contributing
 

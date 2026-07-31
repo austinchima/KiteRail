@@ -33,7 +33,7 @@ func (e *Engine) Reload(ctx context.Context) error {
 	if os.IsNotExist(err) {
 		// Ignore if directory doesn't exist, just an empty engine
 		query, err := rego.New(
-			rego.Query("data.kiterail.decision"),
+			rego.Query("data.kiterail.authz.decision"),
 		).PrepareForEval(ctx)
 		if err != nil {
 			return err
@@ -43,7 +43,7 @@ func (e *Engine) Reload(ctx context.Context) error {
 	}
 
 	query, err := rego.New(
-		rego.Query("data.kiterail.decision"),
+		rego.Query("data.kiterail.authz.decision"),
 		rego.Load([]string{e.policyDir}, nil),
 	).PrepareForEval(ctx)
 
@@ -60,11 +60,12 @@ func (e *Engine) Reload(ctx context.Context) error {
 // Evaluate evaluates the input against the loaded policies.
 func (e *Engine) Evaluate(ctx context.Context, input proxy.EvalInput) (proxy.ProxyDecision, error) {
 	inputMap := map[string]interface{}{
-		"tool":       input.Tool,
-		"arguments":  input.Arguments,
-		"agent":      input.Agent,
-		"timestamp":  input.Timestamp,
-		"raw_method": input.RawMethod,
+		"tool":             input.Tool,
+		"arguments":        input.Arguments,
+		"agent":            input.Agent,
+		"timestamp":        input.Timestamp,
+		"raw_method":       input.RawMethod,
+		"enabled_policies": input.EnabledPolicies,
 	}
 
 	e.mu.RLock()
@@ -77,7 +78,8 @@ func (e *Engine) Evaluate(ctx context.Context, input proxy.EvalInput) (proxy.Pro
 	}
 
 	decision := proxy.ProxyDecision{
-		Action: "allow", // default
+		Action: "deny", // default fail-closed
+		Explanation: "No matching policy found (fallback)",
 	}
 
 	if len(rs) > 0 && len(rs[0].Expressions) > 0 {

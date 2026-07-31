@@ -1,5 +1,4 @@
-# Build stage
-FROM golang:1.23-alpine AS builder
+FROM golang:1.26-alpine AS builder
 
 RUN apk add --no-cache git
 
@@ -17,6 +16,9 @@ RUN apk add --no-cache ca-certificates tzdata
 RUN addgroup -S kiterail && adduser -S kiterail -G kiterail
 
 COPY --from=builder /kiterail /usr/local/bin/kiterail
+
+# Bake policies into the image as a fallback
+COPY policies/ /app/policies/
 
 USER kiterail
 EXPOSE 8080

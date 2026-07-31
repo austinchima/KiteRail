@@ -1,20 +1,16 @@
-version: '3.8'
-
 services:
   proxy:
     build:
-      context: ./backend
-      dockerfile: ../Dockerfile
+      context: .
+      dockerfile: Dockerfile
     ports:
       - "8080:8080"
     environment:
       KITERAIL_LISTEN_ADDR: ":8080"
       KITERAIL_NATS_URL: "nats://nats:4222"
       KITERAIL_POSTGRES_DSN: "postgres://kiterail:kiterail@postgres:5432/kiterail?sslmode=disable"
-      KITERAIL_POLICY_DIR: "/policies"
+      KITERAIL_POLICY_DIR: "/app/policies"
       KITERAIL_LOG_LEVEL: "info"
-    volumes:
-      - ./policies:/policies:ro
     depends_on:
       nats:
         condition: service_started
