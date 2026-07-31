@@ -39,6 +39,12 @@ type LedgerEntry struct {
 	Hash        string
 }
 
+// LedgerStats represents aggregated stats.
+type LedgerStats struct {
+	TotalActionsToday int
+	PolicyViolations  int
+}
+
 // Store represents the ledger storage.
 type Store struct {
 	db *sql.DB
@@ -146,4 +152,23 @@ func (s *Store) Query(ctx context.Context) ([]LedgerEntry, error) {
 		entries = append(entries, entry)
 	}
 	return entries, nil
+}
+
+// Stats returns aggregated stats for today.
+func (s *Store) Stats(ctx context.Context) (LedgerStats, error) {
+	var stats LedgerStats
+	
+	// Total actions today
+	err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM ledger WHERE timestamp >= CURRENT_DATE").Scan(&stats.TotalActionsToday)
+	if err != nil {
+		return stats, err
+	}
+	
+	// Violations today
+	err = s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM ledger WHERE timestamp >= CURRENT_DATE AND decision IN ('deny', 'quarantine')").Scan(&stats.PolicyViolations)
+	if err != nil {
+		return stats, err
+	}
+	
+	return stats, nil
 }
