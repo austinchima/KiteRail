@@ -184,6 +184,8 @@ curl -X POST -H "Authorization: Bearer sk_dev_123" \
   -d '{"tool": "stripe.charge.refund", "arguments": {"amount": 2500}}'
 ```
 
+👉 See [docs/API.md](docs/API.md) for the full REST reference including request/response shapes and error codes.
+
 ## Configuration
 
 KiteRail is configured via environment variables or a `kiterail.yaml` file.
