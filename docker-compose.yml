@@ -7,27 +7,22 @@ services:
       - "8080:8080"
     environment:
       KITERAIL_LISTEN_ADDR: ":8080"
-      KITERAIL_NATS_URL: "nats://nats:4222"
       KITERAIL_POSTGRES_DSN: "postgres://kiterail:kiterail@postgres:5432/kiterail?sslmode=disable"
       KITERAIL_POLICY_DIR: "/app/policies"
       KITERAIL_LOG_LEVEL: "info"
       KITERAIL_API_KEYS: "sk_dev_123:agent_1"
-      KITERAIL_TARGET_URL: "http://host.docker.internal:8081"
+      KITERAIL_TARGET_URL: "http://echo-target:8081"
     depends_on:
-      nats:
-        condition: service_started
       postgres:
         condition: service_healthy
     restart: unless-stopped
 
-  nats:
-    image: nats:2-alpine
-    command: ["--jetstream", "--store_dir", "/data"]
+  echo-target:
+    image: mendhak/http-https-echo:latest
+    environment:
+      HTTP_PORT: 8081
     ports:
-      - "4222:4222"
-      - "8222:8222"
-    volumes:
-      - nats_data:/data
+      - "8081:8081"
     restart: unless-stopped
 
   postgres:
@@ -48,5 +43,4 @@ services:
     restart: unless-stopped
 
 volumes:
-  nats_data:
   pg_data:
