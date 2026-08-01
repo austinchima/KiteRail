@@ -46,7 +46,7 @@ func TestStore_Append(t *testing.T) {
 
 	mock.ExpectExec("INSERT INTO ledger").
 		WithArgs(
-			43,            // seq_num
+			43,               // seq_num
 			sqlmock.AnyArg(), // timestamp
 			"agent_test",
 			"tool_test",

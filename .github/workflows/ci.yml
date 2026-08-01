@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [main, dev]
+
+jobs:
+  test:
+    name: Build, Vet & Test
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: kiterail
+          POSTGRES_PASSWORD: kiterail
+          POSTGRES_DB: kiterail
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        env:
+          KITERAIL_POSTGRES_DSN: postgres://kiterail:kiterail@localhost:5432/kiterail?sslmode=disable
+        run: go test -race -count=1 ./...
+
+      - name: Build
+        run: go build -o /dev/null ./cmd/...

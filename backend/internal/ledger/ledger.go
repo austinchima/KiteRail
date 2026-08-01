@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "github.com/lib/pq"
@@ -99,21 +100,9 @@ func isSerializationFailure(err error) bool {
 	if err == nil {
 		return false
 	}
-	return len(err.Error()) >= 5 && err.Error()[:5] == "pq: E" &&
-		(containsStr(err.Error(), "40001") || containsStr(err.Error(), "serialization"))
-}
-
-func containsStr(s, sub string) bool {
-	return len(s) >= len(sub) && (s == sub || len(s) > 0 && findStr(s, sub))
-}
-
-func findStr(s, sub string) bool {
-	for i := 0; i <= len(s)-len(sub); i++ {
-		if s[i:i+len(sub)] == sub {
-			return true
-		}
-	}
-	return false
+	errStr := err.Error()
+	return len(errStr) >= 5 && errStr[:5] == "pq: E" &&
+		(strings.Contains(errStr, "40001") || strings.Contains(errStr, "serialization"))
 }
 
 func (s *Store) appendOnce(ctx context.Context, entry LedgerEntry) error {
@@ -162,16 +151,16 @@ func (s *Store) Verify(ctx context.Context) (bool, error) {
 		if err := rows.Scan(&entry.SeqNum, &entry.Timestamp, &entry.Agent, &entry.Tool, &entry.Decision, &entry.PolicyRule, &entry.PayloadHash, &entry.PrevHash, &entry.Hash); err != nil {
 			return false, fmt.Errorf("failed to scan ledger entry: %w", err)
 		}
-		
+
 		if entry.PrevHash != prevHash {
 			return false, nil
 		}
-		
+
 		expectedHash := calculateHash(entry)
 		if entry.Hash != expectedHash {
 			return false, nil
 		}
-		
+
 		prevHash = entry.Hash
 	}
 
@@ -200,18 +189,18 @@ func (s *Store) Query(ctx context.Context) ([]LedgerEntry, error) {
 // Stats returns aggregated stats for today.
 func (s *Store) Stats(ctx context.Context) (LedgerStats, error) {
 	var stats LedgerStats
-	
+
 	// Total actions today
 	err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM ledger WHERE timestamp >= CURRENT_DATE").Scan(&stats.TotalActionsToday)
 	if err != nil {
 		return stats, err
 	}
-	
+
 	// Violations today
 	err = s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM ledger WHERE timestamp >= CURRENT_DATE AND decision IN ('deny', 'quarantine')").Scan(&stats.PolicyViolations)
 	if err != nil {
 		return stats, err
 	}
-	
+
 	return stats, nil
 }
