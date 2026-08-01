@@ -65,7 +65,6 @@ func (e *Engine) Evaluate(ctx context.Context, input proxy.EvalInput) (proxy.Pro
 		"agent":            input.Agent,
 		"timestamp":        input.Timestamp,
 		"raw_method":       input.RawMethod,
-		"enabled_policies": input.EnabledPolicies,
 	}
 
 	e.mu.RLock()

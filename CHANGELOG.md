@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-08-01
+
+### Added
+
+- Retry logic for serializable transaction failures in `ledger.Append()`: up to 3 attempts
+  with 5ms/10ms linear backoff. Prevents silent hash-chain corruption under concurrent load.
+- Version constant `1.0.0` in server binary, reflected in `/api/v1/health` response.
+
+### Changed
+
+- **NATS JetStream removed from v1.0 runtime.** All audit events now write directly to the
+  Postgres ledger. NATS JetStream will return in v1.1 for real-time streaming and SIEM export.
+- `quarantine.NewHandler` signature simplified — publisher parameter removed. HITL approve/deny
+  actions write only to the Postgres ledger in this release.
+- `proxy.NewSSEHandler` accepts no arguments and returns HTTP 501 for the topology stream
+  endpoint. The Topology dashboard view uses its built-in static simulation.
+- Server startup no longer requires a reachable NATS server — reducing local dev and Docker
+  Compose dependencies to Postgres only.
+
+### Fixed
+
+- `ledger.Append()` previously had no retry on serialization failure. Any concurrent write
+  would return an error silently discarded by the proxy, breaking the hash chain without
+  any signal. Now retried up to 3 times and surfaced correctly if all attempts fail.
+
+### Removed
+
+- NATS JetStream publisher and subscriber startup from `main.go` (deferred to v1.1)
+- NATS health check from `/api/v1/health` response body (deferred to v1.1)
+- `events.Publisher` dependency from `quarantine/handler.go`
+- `events.Subscriber` dependency from `proxy/sse.go`
+
 ## [0.2.0] - 2026-07-30
 
 ### Added
@@ -56,6 +88,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Apache 2.0 license
 - Production README with architecture diagram, quickstart, and policy authoring guide
 
-[Unreleased]: https://github.com/austinchima/KiteRail/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/austinchima/KiteRail/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/austinchima/KiteRail/compare/v0.2.0...v1.0.0
 [0.2.0]: https://github.com/austinchima/KiteRail/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/austinchima/KiteRail/releases/tag/v0.1.0

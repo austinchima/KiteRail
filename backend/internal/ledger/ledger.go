@@ -73,7 +73,50 @@ func calculateHash(entry LedgerEntry) string {
 }
 
 // Append appends a new entry to the ledger.
+// The transaction runs at SERIALIZABLE isolation to guarantee hash-chain ordering.
+// On serialization failure (SQLSTATE 40001), the operation retries up to 3 times
+// with brief backoff before returning an error.
 func (s *Store) Append(ctx context.Context, entry LedgerEntry) error {
+	const maxRetries = 3
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		err := s.appendOnce(ctx, entry)
+		if err == nil {
+			return nil
+		}
+		// Postgres serialization failure: "ERROR 40001 (serialization_failure)"
+		if isSerializationFailure(err) && attempt < maxRetries-1 {
+			// Brief backoff: 5ms, 10ms, ...
+			time.Sleep(time.Duration(5*(attempt+1)) * time.Millisecond)
+			continue
+		}
+		return err
+	}
+	return fmt.Errorf("ledger append failed after %d attempts", maxRetries)
+}
+
+// isSerializationFailure detects Postgres serialization failures (SQLSTATE 40001).
+func isSerializationFailure(err error) bool {
+	if err == nil {
+		return false
+	}
+	return len(err.Error()) >= 5 && err.Error()[:5] == "pq: E" &&
+		(containsStr(err.Error(), "40001") || containsStr(err.Error(), "serialization"))
+}
+
+func containsStr(s, sub string) bool {
+	return len(s) >= len(sub) && (s == sub || len(s) > 0 && findStr(s, sub))
+}
+
+func findStr(s, sub string) bool {
+	for i := 0; i <= len(s)-len(sub); i++ {
+		if s[i:i+len(sub)] == sub {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Store) appendOnce(ctx context.Context, entry LedgerEntry) error {
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
 	if err != nil {
 		return fmt.Errorf("failed to begin tx: %w", err)
