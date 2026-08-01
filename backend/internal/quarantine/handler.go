@@ -6,17 +6,25 @@ import (
 	"strings"
 
 	"go.uber.org/zap"
+
+	"github.com/austinchima/kiterail/internal/ledger"
 )
 
 // Handler exposes REST endpoints for the quarantine queue.
 type Handler struct {
 	store  *Store
+	lStore *ledger.Store
 	logger *zap.Logger
 }
 
 // NewHandler creates a new quarantine HTTP handler.
-func NewHandler(store *Store, logger *zap.Logger) *Handler {
-	return &Handler{store: store, logger: logger}
+// The pub parameter is intentionally unused in v1.0; NATS re-integration is planned for v1.1.
+func NewHandler(store *Store, lStore *ledger.Store, logger *zap.Logger) *Handler {
+	return &Handler{
+		store:  store,
+		lStore: lStore,
+		logger: logger,
+	}
 }
 
 // ServeHTTP routes quarantine API requests.
@@ -77,9 +85,21 @@ func (h *Handler) approveEntry(w http.ResponseWriter, r *http.Request, id string
 
 	if err := h.store.Approve(r.Context(), id, body.ApprovedBy); err != nil {
 		h.logger.Error("failed to approve", zap.Error(err))
-		http.Error(w, `{"error": "failed to approve"}`, http.StatusInternalServerError)
+		http.Error(w, `{"error": "failed to approve"}`, http.StatusNotFound)
 		return
 	}
+
+	// Record HITL approval in tamper-evident ledger.
+	if h.lStore != nil {
+		_ = h.lStore.Append(r.Context(), ledger.LedgerEntry{
+			Agent:       body.ApprovedBy,
+			Tool:        "quarantine.approve",
+			Decision:    "approved",
+			PolicyRule:  "hitl_approval",
+			PayloadHash: id,
+		})
+	}
+
 	json.NewEncoder(w).Encode(map[string]string{"status": "approved", "id": id})
 }
 
@@ -95,8 +115,20 @@ func (h *Handler) denyEntry(w http.ResponseWriter, r *http.Request, id string) {
 
 	if err := h.store.Deny(r.Context(), id, body.DeniedBy, body.Reason); err != nil {
 		h.logger.Error("failed to deny", zap.Error(err))
-		http.Error(w, `{"error": "failed to deny"}`, http.StatusInternalServerError)
+		http.Error(w, `{"error": "failed to deny"}`, http.StatusNotFound)
 		return
 	}
+
+	// Record HITL denial in tamper-evident ledger.
+	if h.lStore != nil {
+		_ = h.lStore.Append(r.Context(), ledger.LedgerEntry{
+			Agent:       body.DeniedBy,
+			Tool:        "quarantine.deny",
+			Decision:    "denied",
+			PolicyRule:  "hitl_denial",
+			PayloadHash: id,
+		})
+	}
+
 	json.NewEncoder(w).Encode(map[string]string{"status": "denied", "id": id})
 }

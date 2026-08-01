@@ -1,0 +1,16 @@
+{
+  "t": "Tamper-Evident Ledger",
+  "i": [
+    ["KiteRail Proxy", "firewall", "Log action generator"],
+    ["Hash Chain DB", "storage", "Immutable ledger"],
+    ["Verify API", "api", "Auditor endpoint"],
+    ["Compliance Officer", "user", "External auditor"]
+  ],
+  "v": [
+    [
+      [[0, -6, 0], [1, 0, 0], [2, 0, 6], [3, 6, 6]],
+      [[0, 1], [2, 1], [3, 2]]
+    ]
+  ],
+  "_": { "f": "compact", "v": "1.0" }
+}

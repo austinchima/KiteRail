@@ -1,0 +1,36 @@
+{
+  "name": "demo-video",
+  "version": "1.0.0",
+  "description": "My Remotion video",
+  "repository": {},
+  "license": "UNLICENSED",
+  "private": true,
+  "dependencies": {
+    "@remotion/cli": "4.0.503",
+    "@remotion/tailwind-v4": "4.0.503",
+    "lucide-react": "^1.28.0",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "remotion": "4.0.503"
+  },
+  "devDependencies": {
+    "@remotion/eslint-config-flat": "4.0.503",
+    "@types/react": "19.2.7",
+    "@types/web": "0.0.166",
+    "autoprefixer": "^10.5.4",
+    "eslint": "9.19.0",
+    "postcss": "^8.5.25",
+    "prettier": "3.8.1",
+    "tailwindcss": "^4.3.3",
+    "typescript": "5.9.3"
+  },
+  "scripts": {
+    "dev": "remotion studio",
+    "build": "remotion bundle",
+    "upgrade": "remotion upgrade",
+    "lint": "eslint src && tsc"
+  },
+  "sideEffects": [
+    "*.css"
+  ]
+}
