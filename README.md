@@ -17,19 +17,74 @@ KiteRail v1 targets fintech tool-call governance (like refunds and wire transfer
 ## How It Works
 
 ```mermaid
-flowchart LR
-    A[AI Agent] --> B[KiteRail Proxy]
-    B --> C{OPA Policy Engine}
-    
-    C -->|ALLOW| D[Target API Server]
-    C -->|DENY| E[Block Request]
-    C -->|QUARANTINE| F[Quarantine Store]
-    
-    F --> I[HITL Approval Inbox]
-    I -->|APPROVE| D
-    I -->|REJECT| E
-    
-    D & E & F & I --> H[(Postgres Audit Ledger)]
+flowchart TB
+    subgraph Client["🤖 Agent Plane"]
+        A[Autonomous AI Agent]
+    end
+
+    subgraph Ingress["🔐 Ingress Middleware"]
+        direction LR
+        M1[CORS Middleware] --> M2[Bearer Auth<br/>KITERAIL_API_KEYS]
+    end
+
+    subgraph Control["⚙️ Control Plane · KiteRail Proxy"]
+        direction TB
+        P[MCP Interceptor<br/>parses tools/call<br/>extracts name + arguments]
+        E[[OPA Policy Engine<br/>Rego evaluator<br/>hot-reload, RWMutex]]
+        SIM[/Policy Simulator<br/>dry-run endpoint/]
+        PS[(Policy Store<br/>./policies/*.rego)]
+        P --> E
+        SIM --> E
+        E -.reads.-> PS
+    end
+
+    subgraph Data["📒 Data Plane · Postgres"]
+        direction LR
+        L[(Audit Ledger<br/>SHA-256 hash-chain<br/>SERIALIZABLE + FOR UPDATE<br/>retry x3)]
+        Q[(Quarantine Store<br/>pending payloads)]
+    end
+
+    subgraph Human["👤 Human Plane"]
+        direction TB
+        UI[React Dashboard<br/>HITL Inbox · Ledger Viewer]
+        REV[Human Reviewer]
+        UI <--> REV
+    end
+
+    subgraph Upstream["🎯 Target Plane"]
+        T[Downstream API<br/>Stripe · kubectl · EHR · ...]
+    end
+
+    A -- JSON-RPC / MCP --> M1
+    M2 --> P
+
+    E -- ALLOW --> T
+    E -- DENY --> DENIED[403 Forbidden]
+    E -- QUARANTINE --> Q
+
+    Q --> UI
+    UI -- approve --> T
+    UI -- deny --> DENIED
+
+    P -- append entry --> L
+    UI -- approve/deny --> L
+
+    UI <-. REST API<br/>/api/v1/{ledger,quarantine,policies,dashboard} .-> Control
+    UI <-. reads .-> L
+
+    classDef control fill:#1e293b,stroke:#38bdf8,color:#e2e8f0,stroke-width:2px
+    classDef data fill:#0f172a,stroke:#a78bfa,color:#e2e8f0,stroke-width:2px
+    classDef human fill:#78350f,stroke:#fbbf24,color:#fef3c7,stroke-width:2px
+    classDef ingress fill:#052e16,stroke:#4ade80,color:#dcfce7,stroke-width:2px
+    classDef upstream fill:#1e1b4b,stroke:#a5b4fc,color:#e0e7ff,stroke-width:2px
+    classDef agent fill:#450a0a,stroke:#f87171,color:#fee2e2,stroke-width:2px
+
+    class P,E,SIM,PS control
+    class L,Q data
+    class UI,REV human
+    class M1,M2 ingress
+    class T,DENIED upstream
+    class A agent
 ```
 
 ## Features
