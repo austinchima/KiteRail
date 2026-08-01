@@ -62,36 +62,27 @@ curl -X POST http://localhost:8080/ \
 
 KiteRail uses Open Policy Agent (OPA) for policy evaluation. Rules return a structured `decision` object containing `action` (`allow`, `deny`, or `quarantine`), `rule`, and `explanation`.
 
-Example policy (`policies/stripe.rego`):
+Example policy (`policies/fintech/refund_limit.rego`):
 
 ```rego
 package kiterail.authz
 
-default decision = {
-    "action": "deny",
-    "rule": "default_deny",
-    "explanation": "Action strictly blocked by default policy"
+import rego.v1
+
+# Allow refunds under $1,000
+decision := {"action": "allow", "rule": "refund_under_limit", "explanation": "Refund amount within autonomous limit"} if {
+    input.tool == "stripe.charge.refund"
+    input.arguments.amount <= 1000
 }
 
-# Allow read-only operations
-decision = {
-    "action": "allow",
-    "rule": "allow_read_only",
-    "explanation": "Read-only operation allowed"
-} {
-    input.tool == "stripe.charge.retrieve"
-}
-
-# Quarantine large refunds for human review
-decision = {
-    "action": "quarantine",
-    "rule": "quarantine_high_value_refund",
-    "explanation": "Stripe refunds over $1,000 require human review"
-} {
+# Quarantine refunds over $1,000 for human review
+decision := {"action": "quarantine", "rule": "refund_over_limit", "explanation": "Refund exceeds $1,000 threshold — routed to human approval"} if {
     input.tool == "stripe.charge.refund"
     input.arguments.amount > 1000
 }
 ```
+
+*Note: A `policies/default_deny.rego` file ensures all other unrecognized actions are blocked by default.*
 
 ## Configuration
 

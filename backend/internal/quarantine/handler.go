@@ -7,23 +7,21 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/austinchima/kiterail/internal/events"
 	"github.com/austinchima/kiterail/internal/ledger"
 )
 
 // Handler exposes REST endpoints for the quarantine queue.
 type Handler struct {
-	store   *Store
-	pub     *events.Publisher
-	lStore  *ledger.Store
-	logger  *zap.Logger
+	store  *Store
+	lStore *ledger.Store
+	logger *zap.Logger
 }
 
 // NewHandler creates a new quarantine HTTP handler.
-func NewHandler(store *Store, pub *events.Publisher, lStore *ledger.Store, logger *zap.Logger) *Handler {
+// The pub parameter is intentionally unused in v1.0; NATS re-integration is planned for v1.1.
+func NewHandler(store *Store, lStore *ledger.Store, logger *zap.Logger) *Handler {
 	return &Handler{
 		store:  store,
-		pub:    pub,
 		lStore: lStore,
 		logger: logger,
 	}
@@ -91,14 +89,7 @@ func (h *Handler) approveEntry(w http.ResponseWriter, r *http.Request, id string
 		return
 	}
 
-	// Publish audit event & record in tamper-evident ledger
-	if h.pub != nil {
-		_ = h.pub.PublishAudit(r.Context(), map[string]interface{}{
-			"type":          "quarantine_approval",
-			"quarantine_id": id,
-			"approved_by":   body.ApprovedBy,
-		})
-	}
+	// Record HITL approval in tamper-evident ledger.
 	if h.lStore != nil {
 		_ = h.lStore.Append(r.Context(), ledger.LedgerEntry{
 			Agent:       body.ApprovedBy,
@@ -128,15 +119,7 @@ func (h *Handler) denyEntry(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 
-	// Publish audit event & record in tamper-evident ledger
-	if h.pub != nil {
-		_ = h.pub.PublishAudit(r.Context(), map[string]interface{}{
-			"type":          "quarantine_denial",
-			"quarantine_id": id,
-			"denied_by":     body.DeniedBy,
-			"reason":        body.Reason,
-		})
-	}
+	// Record HITL denial in tamper-evident ledger.
 	if h.lStore != nil {
 		_ = h.lStore.Append(r.Context(), ledger.LedgerEntry{
 			Agent:       body.DeniedBy,
