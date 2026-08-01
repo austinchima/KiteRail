@@ -289,14 +289,95 @@ If you're a potential design partner and one of these is a blocker for your pilo
 
 ---
 
-## Roadmap (near-term)
+## Roadmap
 
-1. **Policy simulation / dry-run** (`POST /api/v1/policies/simulate`) — evaluate a hypothetical tool call without executing. **Just landed on `main`.**
-2. **Structured request-ID / trace-ID** threaded through proxy → ledger.
-3. **`/metrics` endpoint** with Prometheus histograms for evaluation latency, decision counts, ledger append duration.
-4. **Benchmarks** (`bench/` directory) — real p50/p95/p99 numbers to replace the "typical p95 <10 ms in local benchmarks" claim in the README.
-5. **Policy file hash in every ledger entry** — closes the "which policy actually decided this?" gap.
-6. **NATS JetStream re-integration** (v1.1) for real-time streaming and SIEM export.
+Roadmap is split by audience: engineers running the proxy, and engineers extending or adopting it. Both ship as part of v1.1.
+
+### v1.1 · Runtime (correctness, observability, streaming)
+
+1. **Structured request-ID / trace-ID** threaded through proxy → OPA → ledger,
+   surfaced in every log line for end-to-end forensics.
+2. **`/metrics` endpoint** (Prometheus) — evaluation latency histograms, decision
+   counts by action, ledger append duration, quarantine queue depth.
+3. **OpenTelemetry traces** — spans for the auth → parse → evaluate → route
+   pipeline. Turns "typical p95 <10 ms" from a claim into a live dashboard.
+4. **Benchmarks** (`bench/` directory) with reproducible `go test -bench`
+   numbers, published in the README to replace the local-only latency claim.
+5. **Policy file hash in every ledger entry** — closes the "which policy
+   version actually decided this?" gap that a compliance officer will ask about
+   on the first call.
+6. **NATS JetStream re-integration** — real-time event streaming to external
+   SIEMs (Splunk, Datadog, Elastic) via the existing `EventPublisher` interface.
+
+### v1.1 · Developer experience (open-core adoption)
+
+7. **`kiterail` CLI** (`cmd/kiterail/`) — thin wrapper over the REST API:
+   `kiterail quarantine list/approve/deny`, `kiterail ledger tail/verify`,
+   `kiterail policy test/simulate`. First-class terminal UX, no dashboard needed.
+8. **Policy cookbook** (`policies/examples/`) — 6 archetypal patterns
+   (allow-list, deny-list, threshold, time-window, agent-scope, jurisdiction,
+   regex-arg) with heavy inline comments. Lowers the Rego learning curve.
+9. **Embedded SQLite backend** — a `LedgerStore` / `QuarantineStore`
+   implementation for zero-infra local dev and single-node deployments.
+   `kiterail server --sqlite ./kiterail.db` and you're running.
+10. **Docker Compose ergonomics** — bundled `echo-target` service so ALLOW
+    requests work out of the box, and NATS removed until v1.1 introduces it
+    as an optional profile.
+11. **REST API reference** (`docs/API.md`) — curl examples for every endpoint,
+    published as a single page so a dev can integrate KiteRail into their
+    Makefile without opening the source.
+
+### v1.2 · Compliance & vertical depth
+
+12. **PII / PCI payload redaction** — per-field Rego-driven redaction before
+    the ledger write, with SSN, PAN, and IBAN patterns shipped by default.
+13. **Policy versioning + rollback** — every policy change is a signed commit
+    in the ledger, and any past decision can be replayed against any past
+    policy set for regulator-facing forensics.
+14. **Second beachhead vertical** — depending on design-partner traction,
+    ship a reference policy set for either agent-driven DevOps
+    (`kubectl`, `terraform`) or healthcare (HIPAA-scoped EHR access).
+
+### v1.2 · Product bets (positioning for design partners)
+
+These are the strategic capabilities that move KiteRail from "compliance
+plumbing" to "the layer regulated AI-agent deployments actually depend on."
+See the [README roadmap](../README.md#roadmap) for the design-partner-facing
+framing.
+
+15. **Protocol agnosticism** — the MCP-specific parser in
+    `internal/proxy/proxy.go` becomes one of several `TrafficDecoder`
+    implementations. Adds first-class REST (JSON body + path templates) and
+    gRPC (unary + streaming) decoders behind a shared `EvalInput` shape, so
+    the same Rego policies govern any protocol.
+
+16. **Compliance packs** — curated, versioned Rego bundles under
+    `policies/packs/{pci-dss,hipaa,sox,eu-ai-act}/` maintained alongside the
+    codebase. Distinct from the [Policy cookbook](#) (item #8) which teaches
+    Rego patterns; packs are ready-to-drop-in policy sets for specific
+    regulatory regimes.
+
+17. **Two-identity authorization** — extend `EvalInput` with a `Principal`
+    field carrying the human user on whose behalf the agent is acting
+    (OAuth token, SAML assertion, or signed principal claim). Policies can
+    then check both `input.agent` and `input.principal`, enabling
+    agent-level segregation of duties. Blocks the class of attack where a
+    compromised or over-scoped agent executes actions its invoking human
+    could not.
+
+### Cloud tier (paid, out of scope for this repository)
+
+- Managed multi-tenant proxy fleet with 99.9% SLA
+- SSO / SAML / SCIM on the dashboard
+- Slack / Teams / PagerDuty integration for HITL approvals
+- Anomaly detection (denial spikes, unusual tool call patterns)
+- Compliance report generator (auto-PDF for SOX, HIPAA, PCI, EU AI Act audits)
+- Long-term ledger retention with WORM S3 export
+- Regularly-audited, regulator-mapped compliance packs (PCI-DSS, HIPAA, etc.) maintained on a shipped-quarterly SLA
+
+*If a paid-tier feature is a blocker for your pilot, open a
+[GitHub Discussion](https://github.com/austinchima/KiteRail/discussions) —
+timelines shift for design partners.*
 
 ---
 
