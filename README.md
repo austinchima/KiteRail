@@ -157,13 +157,9 @@ KiteRail is configured via environment variables or a `kiterail.yaml` file.
 
 ## Architecture
 
-KiteRail's codebase is structured around distinct internal Go packages:
+KiteRail is organized into six planes (agent, ingress, control, data, human, target) with interface-driven boundaries between packages, so new decision engines, storage backends, or verticals can be added without touching the core proxy.
 
-- `internal/proxy`: The core HTTP proxy intercepting traffic.
-- `internal/opaengine`: Integration with Open Policy Agent for Rego rules.
-- `internal/policystore`: Policy CRUD operations.
-- `internal/quarantine`: Manages requests held for human review.
-- `internal/ledger`: Postgres-backed tamper-evident audit log.
+👉 **See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** for the full design, request lifecycle, extension points, and correctness discussion.
 
 ## Why not just use...?
 
