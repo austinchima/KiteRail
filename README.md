@@ -91,6 +91,7 @@ flowchart TB
 
 - **Inline MCP Proxy:** Low-overhead interception (typical p95 <10ms in local benchmarks). Requires zero agent code modifications.
 - **OPA Policy Engine:** Declarative Rego rules, hot-reload support, and GitOps friendly.
+- **Policy Simulator:** Dry-run `/api/v1/policies/simulate` endpoint to validate agent payload changes before they hit production.
 - **Human-in-the-Loop:** Quarantine queue for high-risk payloads, which wait for human review.
 - **Audit Ledger:** Hash-chained, tamper-detectable Postgres audit log with serial isolation.
 
@@ -178,7 +179,7 @@ KiteRail's codebase is structured around distinct internal Go packages:
 
 The included React dashboard gives you a real-time Human-in-the-Loop inbox and an audit ledger view. 
 
-Interested in piloting KiteRail on real agent workflows? I am looking for design partners in fintech or agent-DevOps. Open a [GitHub Discussion](https://github.com/austinchima/KiteRail/discussions) or reach me directly at [email].
+Interested in piloting KiteRail on real agent workflows? I am looking for design partners in fintech or agent-DevOps. Open a [GitHub Discussion](https://github.com/austinchima/KiteRail/discussions).
 
 ## Contributing
 
