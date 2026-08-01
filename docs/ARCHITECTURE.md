@@ -1,10 +1,106 @@
 # KiteRail Architecture
 
-This document covers the request lifecycle and the internal package structure of KiteRail.
+> This document explains *why* KiteRail is built the way it is, and where you can extend it without touching the core. If you only have five minutes, read the [Design Thesis](#design-thesis) and skim the three diagrams.
 
-## Request Lifecycle (Sequence View)
+---
 
-Shows exactly what happens on a single `tools/call` request. This highlights the asynchronous Human-in-the-Loop (HITL) review loop.
+## Design Thesis
+
+KiteRail is built on a single opinion:
+
+> **The LLM does one bounded step. Everything safety-critical is deterministic code.**
+
+Most "AI safety" tooling tries to make the model itself safer — prompt hardening, fine-tuning, output classifiers. KiteRail assumes the model is already compromised and asks a different question: *given that the LLM will eventually try something dangerous, what does the surrounding system need to look like so that "dangerous" is a decision you can inspect, diff, and reverse?*
+
+The answer:
+
+| Layer | Behaviour | Why it's here |
+|---|---|---|
+| **LLM** | Picks a tool and its arguments | Non-deterministic. Not trusted. |
+| **Policy** | Rego rules evaluate the tool call | Deterministic. Version-controlled. Reviewable. |
+| **Routing** | Allow / deny / quarantine, based on the decision | Deterministic. Testable. |
+| **Audit** | Every decision is hash-chained into a tamper-detectable log | Deterministic. Regulator-facing. |
+| **Human review** | High-risk calls wait for a person | Deterministic. Auditable. |
+
+Everything below the LLM row can be reasoned about with the same tools we use for any other piece of production software — types, tests, code review, git history. That's the whole point.
+
+---
+
+## System Overview
+
+KiteRail sits inline between an autonomous agent and any downstream API. It groups its responsibilities into six planes.
+
+```mermaid
+flowchart TB
+    subgraph Client["🤖 Agent Plane"]
+        A[Autonomous AI Agent]
+    end
+
+    subgraph Ingress["🔐 Ingress Middleware"]
+        direction LR
+        M1[CORS Middleware] --> M2[Bearer Auth<br/>KITERAIL_API_KEYS]
+    end
+
+    subgraph Control["⚙️ Control Plane · KiteRail Proxy"]
+        direction TB
+        P[MCP Interceptor<br/>parses tools/call<br/>extracts name + arguments]
+        E[[OPA Policy Engine<br/>Rego evaluator<br/>hot-reload, RWMutex]]
+        SIM[/Policy Simulator<br/>dry-run endpoint/]
+        PS[(Policy Store<br/>./policies/*.rego)]
+        P --> E
+        SIM --> E
+        E -.reads.-> PS
+    end
+
+    subgraph Data["📒 Data Plane · Postgres"]
+        direction LR
+        L[(Audit Ledger<br/>SHA-256 hash-chain<br/>SERIALIZABLE + FOR UPDATE<br/>retry x3)]
+        Q[(Quarantine Store<br/>pending payloads)]
+    end
+
+    subgraph Human["👤 Human Plane"]
+        direction TB
+        UI[React Dashboard<br/>HITL Inbox · Ledger Viewer]
+        REV[Human Reviewer]
+        UI <--> REV
+    end
+
+    subgraph Upstream["🎯 Target Plane"]
+        T[Downstream API<br/>Stripe · kubectl · EHR · ...]
+    end
+
+    A -- JSON-RPC / MCP --> M1
+    M2 --> P
+
+    E -- ALLOW --> T
+    E -- DENY --> DENIED[403 Forbidden]
+    E -- QUARANTINE --> Q
+
+    Q --> UI
+    UI -- approve --> T
+    UI -- deny --> DENIED
+
+    P -- append entry --> L
+    UI -- approve/deny --> L
+
+    UI <-. REST API<br/>/api/v1/{ledger,quarantine,policies,dashboard} .-> Control
+    UI <-. reads .-> L
+```
+
+### Why these six planes?
+
+- **Agent plane** is deliberately outside our trust boundary. We don't ship an SDK. Any agent that speaks JSON-RPC / MCP works today.
+- **Ingress middleware** is the only path in. Bearer auth is checked *before* policy evaluation so anonymous traffic never touches the OPA engine.
+- **Control plane** is the deterministic core. It's stateless — restart it, no state is lost.
+- **Data plane** owns durability. Postgres is the single source of truth for both the audit ledger and the quarantine queue.
+- **Human plane** exists because the EU AI Act, SOX, and HIPAA all require it for high-risk decisions. The dashboard is a thin client over the same REST API a third-party UI could hit.
+- **Target plane** is untouched. KiteRail never modifies the downstream API, it just decides whether the request reaches it.
+
+---
+
+## Request Lifecycle
+
+What happens on a single tool call, end to end:
 
 ```mermaid
 sequenceDiagram
@@ -49,9 +145,15 @@ sequenceDiagram
     end
 ```
 
-## Package Dependency Graph
+Every arrow in this diagram maps to a function call in [`internal/proxy/proxy.go`](../backend/internal/proxy/proxy.go). If you understand this diagram, you understand the hot path.
 
-Shows how the Go packages compose to separate concerns, allowing for easy expansion of backends (e.g., swapping PostgreSQL or OPA).
+### A note on ordering
+
+The audit ledger is written **before** the routing decision is executed (step 8, before the `alt` block). This is intentional: if the proxy crashes between "decide" and "route," the auditor still knows what would have happened. A compliance product where the audit log can lag the action is not a compliance product.
+
+---
+
+## Package Layout
 
 ```mermaid
 flowchart LR
@@ -94,12 +196,114 @@ flowchart LR
     PS --> REGO
     Q --> PG
     LED --> PG
-
-    classDef entry fill:#1e293b,stroke:#38bdf8,color:#e2e8f0
-    classDef pkg fill:#0f172a,stroke:#a78bfa,color:#e2e8f0
-    classDef ext fill:#450a0a,stroke:#f87171,color:#fee2e2
-
-    class MAIN entry
-    class CFG,PROXY,OPA,PS,Q,LED,DASH pkg
-    class PG,REGO ext
 ```
+
+### Design rules the layout enforces
+
+- **`main.go` is the only place that wires implementations to interfaces.** Every other package depends only on interfaces defined next to the consumer (e.g. `proxy.OPAEngine`, `proxy.LedgerStore`).
+- **No package imports upward.** `internal/proxy` doesn't know `internal/dashboard` exists.
+- **No cycles.** Enforceable via `go vet` and future CI.
+- **Handlers and stores are split** in every package that has both. `store.go` is pure data access; `handler.go` is HTTP. Testing either in isolation is trivial.
+
+---
+
+## Concurrency & Correctness
+
+The proxy is inline on the critical path of an agent making a real API call. It has to be fast *and* correct under load. Three problems get explicit treatment.
+
+### 1. Hash-chained ledger under concurrent writes
+
+Every ledger entry stores `hash = SHA256(prev_hash || entry_data)`. Two concurrent writers reading the same `prev_hash` would fork the chain silently. The fix:
+
+- Each `Append()` opens a `SERIALIZABLE` transaction and takes `SELECT ... FOR UPDATE` on the tip of the chain.
+- On serialization failure (Postgres error code `40001`), retry up to 3 times with 5–10 ms linear backoff.
+- If all retries fail, the error is surfaced — never silently discarded.
+
+This is documented in the [v1.0 CHANGELOG](../CHANGELOG.md#100---2026-08-01) because the previous version had a silent bug here. It's the kind of correctness issue only visible under real concurrent load; catching it in v0.2 → v1.0 was the last thing standing between "prototype" and "shippable."
+
+### 2. OPA engine hot-reload race
+
+`Evaluate()` and `Reload()` both touch the compiled Rego module set. A `sync.RWMutex` guards them: readers (evaluators) don't block each other, but a reload (writer) waits for in-flight evaluations to finish before swapping the module set atomically.
+
+### 3. Graceful shutdown
+
+`main.go` installs a signal handler on `SIGINT` / `SIGTERM`. On shutdown, the HTTP server stops accepting new connections and waits up to 10 seconds for in-flight requests to complete before closing the Postgres connection pool. No half-written ledger entries.
+
+---
+
+## Extension Points
+
+The interface boundaries in the [package diagram](#package-layout) are the extension points. They exist so that scaling KiteRail into new verticals or new deployment shapes doesn't require rewriting the proxy.
+
+### Add a new decision engine (e.g. Cedar, custom Go logic)
+
+Implement the `proxy.OPAEngine` interface:
+
+```go
+type OPAEngine interface {
+    Evaluate(ctx context.Context, input EvalInput) (ProxyDecision, error)
+}
+```
+
+Wire it in `main.go`. The rest of the system is untouched.
+
+### Add a new storage backend (e.g. CockroachDB, Cloud Spanner)
+
+Implement `proxy.LedgerStore` and `proxy.QuarantineStore`:
+
+```go
+type LedgerStore interface {
+    Append(ctx context.Context, entry ledger.LedgerEntry) error
+}
+type QuarantineStore interface {
+    Create(ctx context.Context, agentID, toolName string, payload []byte) (string, error)
+}
+```
+
+The hash-chain invariant lives in the store implementation, not the proxy, so a new backend has to honour it — but it can use whatever concurrency primitives the target database offers.
+
+### Add a new event sink (e.g. NATS, Kafka, SIEM webhook)
+
+Implement `proxy.EventPublisher`. v1.0 ships with a `NoOpPublisher` (audit events go straight to the Postgres ledger). v1.1 will re-introduce a `NatsPublisher` for real-time streaming; a `KafkaPublisher` or a `WebhookPublisher` would be a drop-in swap.
+
+### Add a new vertical (DevOps, healthcare, HR)
+
+No code changes. Write Rego. Example: quarantine any `kubectl` operation on a `production` namespace, or block any EHR read where the accessing agent lacks a BAA claim on their token. Policies live in `./policies/<vertical>/*.rego` and are hot-reloaded.
+
+---
+
+## What's Deliberately Excluded from v1.0
+
+Being explicit about scope is how you stay shippable.
+
+| Feature | Why deferred | Target |
+|---|---|---|
+| NATS JetStream real-time streaming | Adds a runtime dependency for local dev. Postgres-only path is simpler for first-time evaluators. | v1.1 |
+| PII/PCI payload redaction | Non-trivial to get right per-vertical. Sketching a per-field Rego-driven redaction model. | v1.2 |
+| SSO / SAML / SCIM on the dashboard | Only relevant once a design partner has multiple reviewers. | Cloud tier |
+| OpenTelemetry traces | `zap` structured logs cover local debugging. OTel matters when someone runs this in a real cluster. | v1.1 |
+| Policy versioning + rollback | Ledger records the policy *rule* today, but not the *policy file hash*. Needed before compliance-officer sign-off. | v1.1 |
+| Multi-tenant proxy fleet | Single-tenant self-host is enough for the beachhead. Multi-tenant is a Cloud-tier problem. | Cloud tier |
+
+If you're a potential design partner and one of these is a blocker for your pilot, open a GitHub Discussion — it'll move the roadmap.
+
+---
+
+## Roadmap (near-term)
+
+1. **Policy simulation / dry-run** (`POST /api/v1/policies/simulate`) — evaluate a hypothetical tool call without executing. **Just landed on `main`.**
+2. **Structured request-ID / trace-ID** threaded through proxy → ledger.
+3. **`/metrics` endpoint** with Prometheus histograms for evaluation latency, decision counts, ledger append duration.
+4. **Benchmarks** (`bench/` directory) — real p50/p95/p99 numbers to replace the "typical p95 <10 ms in local benchmarks" claim in the README.
+5. **Policy file hash in every ledger entry** — closes the "which policy actually decided this?" gap.
+6. **NATS JetStream re-integration** (v1.1) for real-time streaming and SIEM export.
+
+---
+
+## A Note on the Name
+
+KiteRail is a *kite line* for autonomous agents — enough tension to keep them safe, enough slack to let them fly. The proxy is the rail; policies are the tether; the audit ledger is what the ground crew reads after the flight.
+
+---
+
+*Questions or feedback on this design? Open a [GitHub Discussion](https://github.com/austinchima/KiteRail/discussions) — architectural critique is especially welcome.*
