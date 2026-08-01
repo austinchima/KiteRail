@@ -89,11 +89,11 @@ flowchart TB
 
 ## Features
 
-- **Inline MCP Proxy:** Low-overhead interception (typical p95 <10ms in local benchmarks). Requires zero agent code modifications.
-- **OPA Policy Engine:** Declarative Rego rules, hot-reload support, and GitOps friendly.
 - **Policy Simulator:** Dry-run `/api/v1/policies/simulate` endpoint to validate agent payload changes before they hit production.
 - **Human-in-the-Loop:** Quarantine queue for high-risk payloads, which wait for human review.
 - **Audit Ledger:** Hash-chained, tamper-detectable Postgres audit log with serial isolation.
+- **OPA Policy Engine:** Declarative Rego rules, hot-reload support, and GitOps friendly.
+- **Inline Proxy:** Low-overhead JSON-RPC / MCP interception today; REST and gRPC support on the roadmap. Requires zero agent code modifications.
 
 ## Quick Start
 
@@ -115,6 +115,14 @@ curl -X POST http://localhost:8080/ \
   -d '{"jsonrpc": "2.0", "method": "tools/call", "params": {"name": "stripe.charge.refund", "arguments": {"amount": 1500}}, "id": 1}'
 # → Returns 202 Quarantined (exceeds $1,000 threshold)
 ```
+
+## Local Dashboard
+
+![KiteRail Dashboard](./assets/dashboard.png)
+
+The included React dashboard gives you a real-time Human-in-the-Loop inbox and an audit ledger view. 
+
+Interested in piloting KiteRail on real agent workflows? I am looking for design partners in fintech or agent-DevOps. Open a [GitHub Discussion](https://github.com/austinchima/KiteRail/discussions).
 
 ## Writing Policies
 
@@ -176,6 +184,8 @@ curl -X POST -H "Authorization: Bearer sk_dev_123" \
   -d '{"tool": "stripe.charge.refund", "arguments": {"amount": 2500}}'
 ```
 
+👉 See [docs/API.md](docs/API.md) for the full REST reference including request/response shapes and error codes.
+
 ## Configuration
 
 KiteRail is configured via environment variables or a `kiterail.yaml` file.
@@ -189,6 +199,8 @@ KiteRail is configured via environment variables or a `kiterail.yaml` file.
 | `KITERAIL_POSTGRES_DSN` | PostgreSQL connection DSN string | `postgres://kiterail:kiterail@localhost:5432/kiterail?sslmode=disable` |
 | `KITERAIL_API_KEYS` | Comma-separated `token:agent_id` pairs for proxy auth | (none — proxy rejects requests if unset) |
 
+*When both are set, environment variables override values in `kiterail.yaml`.*
+
 ## Architecture
 
 KiteRail is organized into six planes (agent, ingress, control, data, human, target) with interface-driven boundaries between packages, so new decision engines, storage backends, or verticals can be added without touching the core proxy.
@@ -197,11 +209,18 @@ KiteRail is organized into six planes (agent, ingress, control, data, human, tar
 
 ## Roadmap
 
-We are currently building towards R2, the version of KiteRail designed for production pilots with our first design partners. Here is what is coming next:
+Two tracks toward v1.1 — the version of KiteRail designed for production pilots with our first design partners.
+
+### Product track (this section)
+The strategic bets that unlock new adoption:
 
 - **Protocol agnosticism:** Moving beyond MCP. We are abstracting the interception layer so KiteRail can enforce policies on standard REST and gRPC traffic.
 - **The compliance stack:** Pre-built OPA policy packs for common compliance requirements. Drop them in and your agent workflows are audit-ready out of the box.
-- **Two-identity authorization:** Right now, KiteRail checks if an agent is allowed to take an action. Next, we will check if the human user who triggered the agent is allowed to take that action. This stops privilege escalation.
+- **Two-identity authorization:** Right now, KiteRail checks whether an autonomous agent is allowed to take an action. Next, we will also check the human user on whose behalf the agent is acting — carried via OAuth token, SAML assertion, or a signed principal claim in the request. This stops a compromised or over-scoped agent from executing an action the human who invoked it could not have executed themselves. Practical example: an agent authorized to issue refunds should still be blocked when Alice from Support asks it to refund an order in a region where Alice has no jurisdiction.
+
+### Engineering track
+Runtime correctness, observability, and developer experience.
+👉 See [docs/ARCHITECTURE.md#roadmap](docs/ARCHITECTURE.md#roadmap) for the technical roadmap (CLI, `/metrics`, request-ID tracing, SQLite backend, policy cookbook, and more).
 
 ## Why not just use...?
 
@@ -210,14 +229,6 @@ We are currently building towards R2, the version of KiteRail designed for produ
 | Cloudflare AI Gateway / Portkey | LLM prompts and responses | KiteRail governs the *tool calls that leave the LLM*. Prompts are safe; refunds are not. |
 | Lakera Guard / NeMo Guardrails | Prompt injection and unsafe outputs | KiteRail assumes the LLM is compromised and firewalls what it can *do*. |
 | OPA + a homegrown proxy | Same primitives | KiteRail packages the proxy, hash-chained ledger, HITL queue, and MCP wire-format parsing—the parts that are hard to get right under concurrency. |
-
-## Local Dashboard
-
-![KiteRail Dashboard](./assets/dashboard.png)
-
-The included React dashboard gives you a real-time Human-in-the-Loop inbox and an audit ledger view. 
-
-Interested in piloting KiteRail on real agent workflows? I am looking for design partners in fintech or agent-DevOps. Open a [GitHub Discussion](https://github.com/austinchima/KiteRail/discussions).
 
 ## Contributing
 
