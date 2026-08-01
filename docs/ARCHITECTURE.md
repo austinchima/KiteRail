@@ -365,19 +365,13 @@ framing.
     compromised or over-scoped agent executes actions its invoking human
     could not.
 
-### Cloud tier (paid, out of scope for this repository)
+### On sustainability
 
-- Managed multi-tenant proxy fleet with 99.9% SLA
-- SSO / SAML / SCIM on the dashboard
-- Slack / Teams / PagerDuty integration for HITL approvals
-- Anomaly detection (denial spikes, unusual tool call patterns)
-- Compliance report generator (auto-PDF for SOX, HIPAA, PCI, EU AI Act audits)
-- Long-term ledger retention with WORM S3 export
-- Regularly-audited, regulator-mapped compliance packs (PCI-DSS, HIPAA, etc.) maintained on a shipped-quarterly SLA
-
-*If a paid-tier feature is a blocker for your pilot, open a
-[GitHub Discussion](https://github.com/austinchima/KiteRail/discussions) —
-timelines shift for design partners.*
+KiteRail is and will remain Apache 2.0. If there's demand, we may eventually
+offer a hosted, managed version for teams that don't want to run the proxy
+themselves — same code, same policies, someone else's Postgres. That decision
+is downstream of whether real teams actually adopt this. For now, the entire
+focus is making the open-source project excellent.
 
 ---
 

@@ -213,7 +213,7 @@ Two tracks toward v1.1 — the version of KiteRail designed for production pilot
 The strategic bets that unlock new adoption:
 
 - **Protocol agnosticism:** Moving beyond MCP. We are abstracting the interception layer so KiteRail can enforce policies on standard REST and gRPC traffic.
-- **The compliance stack:** Pre-built OPA policy packs for common compliance requirements. Drop them in and your agent workflows are audit-ready out of the box. *Note: A few reference compliance packs ship in the open-source repo. The Cloud tier offers regularly-audited, regulator-mapped packs maintained on a shipped-quarterly SLA.*
+- **The compliance stack:** Pre-built OPA policy packs for common compliance requirements. Drop them in and your agent workflows are audit-ready out of the box.
 - **Two-identity authorization:** Right now, KiteRail checks whether an autonomous agent is allowed to take an action. Next, we will also check the human user on whose behalf the agent is acting — carried via OAuth token, SAML assertion, or a signed principal claim in the request. This stops a compromised or over-scoped agent from executing an action the human who invoked it could not have executed themselves. Practical example: an agent authorized to issue refunds should still be blocked when Alice from Support asks it to refund an order in a region where Alice has no jurisdiction.
 
 ### Engineering track
