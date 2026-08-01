@@ -1,0 +1,9 @@
+
+listen_addr: ":8081"
+target_url: "http://yaml.com"
+policy_dir: "/yaml/policies"
+nats_url: "nats://yaml:4222"
+postgres_dsn: "postgres://yaml/db"
+log_level: "warn"
+api_keys:
+  yamlkey: yamlval
