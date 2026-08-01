@@ -15,6 +15,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Refactored `internal/policy` to `internal/policystore` and `internal/opa` to `internal/opaengine` for better package boundary clarity.
 - `KITERAIL_TARGET_URL` is now strictly required with no default value. Server fails fast if unset.
 - Updated README with a "Why KiteRail vs X" table and refined positioning.
+
+## [1.1.0-alpha] - 2026-08-01
+
+### Added
+- Prometheus `/metrics` endpoint exposing core counters and histograms (`kiterail_http_requests_total`, `kiterail_http_request_duration_seconds`, `kiterail_decisions_total`).
+- `echo-target` mock service in `docker-compose.yml` to ensure `ALLOW` paths succeed out-of-the-box.
+- Policy examples cookbook (`policies/examples/`) with 4 templates: `allow_list.rego`, `threshold.rego`, `time_window.rego`, and `jurisdiction.rego`.
+- Dedicated "Using KiteRail from the CLI" section in README.md with practical cURL recipes.
+
+### Removed
+- `nats` service and unused NATS variables stripped from `docker-compose.yml` (v1 is strictly Postgres).
+
 ## [1.0.0] - 2026-08-01
 
 ### Added
@@ -96,7 +108,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Apache 2.0 license
 - Production README with architecture diagram, quickstart, and policy authoring guide
 
-[Unreleased]: https://github.com/austinchima/KiteRail/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/austinchima/KiteRail/compare/v1.1.0-alpha...HEAD
+[1.1.0-alpha]: https://github.com/austinchima/KiteRail/compare/v1.0.0...v1.1.0-alpha
 [1.0.0]: https://github.com/austinchima/KiteRail/compare/v0.2.0...v1.0.0
 [0.2.0]: https://github.com/austinchima/KiteRail/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/austinchima/KiteRail/releases/tag/v0.1.0
