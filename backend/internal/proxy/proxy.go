@@ -57,6 +57,13 @@ type LedgerStore interface {
 	Append(ctx context.Context, entry ledger.LedgerEntry) error
 }
 
+// NoOpPublisher is a null object pattern for EventPublisher.
+type NoOpPublisher struct{}
+
+func (NoOpPublisher) PublishTelemetry(ctx context.Context, event interface{}) error { return nil }
+func (NoOpPublisher) PublishAudit(ctx context.Context, event interface{}) error { return nil }
+func (NoOpPublisher) PublishQuarantine(ctx context.Context, event interface{}) error { return nil }
+
 
 // Handler is the reverse proxy HTTP handler.
 type Handler struct {
@@ -174,15 +181,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	hashSum := sha256.Sum256(body)
 	payloadHash := hex.EncodeToString(hashSum[:])
-	if h.publisher != nil {
-		if err := h.publisher.PublishTelemetry(r.Context(), map[string]interface{}{
-			"source":    input.Agent,
-			"target":    input.Tool,
-			"status":    decision.Action,
-			"timestamp": time.Now(),
-		}); err != nil {
-			h.logger.Error("Failed to publish telemetry event", zap.Error(err))
-		}
+	if err := h.publisher.PublishTelemetry(r.Context(), map[string]interface{}{
+		"source":    input.Agent,
+		"target":    input.Tool,
+		"status":    decision.Action,
+		"timestamp": time.Now(),
+	}); err != nil {
+		h.logger.Error("Failed to publish telemetry event", zap.Error(err))
 	}
 
 	if h.ledgerStore != nil {
@@ -201,30 +206,26 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	switch decision.Action {
 	case "allow":
-		if h.publisher != nil {
-			if err := h.publisher.PublishAudit(r.Context(), map[string]interface{}{
-				"action":    "allow",
-				"agent":     input.Agent,
-				"tool":      input.Tool,
-				"rule":      decision.Rule,
-				"timestamp": time.Now(),
-			}); err != nil {
-				h.logger.Error("Failed to publish audit event", zap.Error(err))
-			}
+		if err := h.publisher.PublishAudit(r.Context(), map[string]interface{}{
+			"action":    "allow",
+			"agent":     input.Agent,
+			"tool":      input.Tool,
+			"rule":      decision.Rule,
+			"timestamp": time.Now(),
+		}); err != nil {
+			h.logger.Error("Failed to publish audit event", zap.Error(err))
 		}
 		h.reverseProxy.ServeHTTP(w, r)
 	case "deny":
-		if h.publisher != nil {
-			if err := h.publisher.PublishAudit(r.Context(), map[string]interface{}{
-				"action":      "deny",
-				"agent":       input.Agent,
-				"tool":        input.Tool,
-				"rule":        decision.Rule,
-				"explanation": decision.Explanation,
-				"timestamp":   time.Now(),
-			}); err != nil {
-				h.logger.Error("Failed to publish audit event", zap.Error(err))
-			}
+		if err := h.publisher.PublishAudit(r.Context(), map[string]interface{}{
+			"action":      "deny",
+			"agent":       input.Agent,
+			"tool":        input.Tool,
+			"rule":        decision.Rule,
+			"explanation": decision.Explanation,
+			"timestamp":   time.Now(),
+		}); err != nil {
+			h.logger.Error("Failed to publish audit event", zap.Error(err))
 		}
 		w.WriteHeader(http.StatusForbidden)
 		json.NewEncoder(w).Encode(map[string]string{"error": "Denied by policy", "explanation": decision.Explanation})
@@ -235,16 +236,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			return
 		}
-		if h.publisher != nil {
-			if err := h.publisher.PublishQuarantine(r.Context(), map[string]interface{}{
-				"quarantine_id": id,
-				"agent":         input.Agent,
-				"tool":          input.Tool,
-				"rule":          decision.Rule,
-				"timestamp":     time.Now(),
-			}); err != nil {
-				h.logger.Error("Failed to publish quarantine event", zap.Error(err))
-			}
+		if err := h.publisher.PublishQuarantine(r.Context(), map[string]interface{}{
+			"quarantine_id": id,
+			"agent":         input.Agent,
+			"tool":          input.Tool,
+			"rule":          decision.Rule,
+			"timestamp":     time.Now(),
+		}); err != nil {
+			h.logger.Error("Failed to publish quarantine event", zap.Error(err))
 		}
 		w.WriteHeader(http.StatusAccepted)
 		json.NewEncoder(w).Encode(map[string]string{"quarantine_id": id, "status": "quarantined"})

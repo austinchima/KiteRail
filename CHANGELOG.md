@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `POST /api/v1/policies/simulate` endpoint for dry-running policy evaluations without triggering audit or ledger side effects.
+- `KITERAIL_ALLOWED_ORIGINS` configuration variable for CORS support.
+
+### Changed
+- Refactored `internal/policy` to `internal/policystore` and `internal/opa` to `internal/opaengine` for better package boundary clarity.
+- `KITERAIL_TARGET_URL` is now strictly required with no default value. Server fails fast if unset.
+- Updated README with a "Why KiteRail vs X" table and refined positioning.
 ## [1.0.0] - 2026-08-01
 
 ### Added
