@@ -1,14 +1,18 @@
-# ⚡ KiteRail
+# KiteRail
 
-Inline compliance proxy for autonomous AI agents
+> *KiteRail treats AI agent safety as a systems problem, not a prompt problem. The LLM does one bounded step — deciding what tool to call. Everything safety-critical (policy, routing, audit, human review) is deterministic Go code you can read, diff, and test. If your agent can spend money, that shouldn't depend on how a model was fine-tuned.*
 
-![Go](https://img.shields.io/badge/Go-1.22%2B-00ADD8?logo=go) ![License](https://img.shields.io/badge/License-Apache_2.0-blue) ![OPA](https://img.shields.io/badge/Policy-OPA_Rego-7d9fc3) ![NATS](https://img.shields.io/badge/Events-NATS_JetStream-27aae1)
+![Go](https://img.shields.io/badge/Go-1.22%2B-00ADD8?logo=go) ![License](https://img.shields.io/badge/License-Apache_2.0-blue) ![OPA](https://img.shields.io/badge/Policy-OPA_Rego-7d9fc3)
+
+## Status
+v1.0.0. Built solo by a 2026 new grad.
+Looking for design partners running agentic workflows in fintech or DevOps.
 
 ## The Problem
 
-Autonomous AI agents calling real-world APIs (payments, infrastructure, healthcare, databases) introduce significant uncontrolled risk. Regulations such as the EU AI Act, SOX, HIPAA, and PCI-DSS increasingly mandate human oversight for high-risk AI decisions. 
+Autonomous AI agents calling real-world APIs introduce uncontrolled risk. Regulations like the EU AI Act, SOX, and PCI-DSS mandate human oversight for high-risk AI decisions. 
 
-KiteRail provides a domain-agnostic safety layer between your AI agents and internal systems. While Fintech is the primary reference implementation, KiteRail's policy model extends seamlessly to DevOps/Cloud infrastructure (`kubectl`, `terraform`), Healthcare EHRs, and Enterprise HR/ERP operations.
+KiteRail v1 targets fintech tool-call governance (like refunds and wire transfers). The architecture is domain-agnostic: Rego policies work just as well for `kubectl` or HR APIs, but we are focusing on one vertical first.
 
 ## How It Works
 
@@ -25,26 +29,24 @@ flowchart LR
     I -->|APPROVE| D
     I -->|REJECT| E
     
-    D & E & F & I --> G[NATS JetStream]
-    G --> H[(Immutable Audit Ledger)]
+    D & E & F & I --> H[(Postgres Audit Ledger)]
 ```
 
 ## Features
 
-- **Inline MCP Proxy** — Designed for sub-5ms low-latency interception; requires zero agent code modifications.
-- **OPA Policy Engine** — Declarative Rego rules, hot-reload support, completely GitOps friendly.
-- **Human-in-the-Loop** — Quarantine queue for payloads flagged as high-risk, pending human review & token injection.
-- **NATS JetStream** — Durable event streaming providing at-least-once delivery for audit logs and quarantine events.
-- **Audit Ledger** — Hash-chained, tamper-detectable audit log backed by PostgreSQL with serial isolation for ordered compliance records.
+- **Inline MCP Proxy:** Low-overhead interception (typical p95 <10ms in local benchmarks). Requires zero agent code modifications.
+- **OPA Policy Engine:** Declarative Rego rules, hot-reload support, and GitOps friendly.
+- **Human-in-the-Loop:** Quarantine queue for high-risk payloads, which wait for human review.
+- **Audit Ledger:** Hash-chained, tamper-detectable Postgres audit log with serial isolation.
 
 ## Quick Start
 
 ```bash
 # Clone the repository
-git clone https://github.com/austinchima/kiterail.git
-cd kiterail
+git clone https://github.com/austinchima/KiteRail.git
+cd KiteRail
 
-# Start all services (proxy, NATS, Postgres)
+# Start all services (proxy, Postgres, frontend dashboard)
 docker compose up -d
 
 # Test the health endpoint
@@ -82,7 +84,7 @@ decision := {"action": "quarantine", "rule": "refund_over_limit", "explanation":
 }
 ```
 
-*Note: A `policies/default_deny.rego` file ensures all other unrecognized actions are blocked by default.*
+> **Note:** A `policies/default_deny.rego` file ensures all unrecognized actions are blocked by default.
 
 ## Configuration
 
@@ -91,9 +93,9 @@ KiteRail is configured via environment variables or a `kiterail.yaml` file.
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `KITERAIL_LISTEN_ADDR` | Address the proxy listens on | `:8080` |
-| `KITERAIL_TARGET_URL` | Upstream target server URL | `http://localhost:8081` |
+| `KITERAIL_TARGET_URL` | Upstream target server URL | **required — no default** |
+| `KITERAIL_ALLOWED_ORIGINS` | Comma-separated list of allowed CORS origins | (none — CORS disabled if unset) |
 | `KITERAIL_POLICY_DIR` | Directory containing `.rego` policies | `./policies` |
-| `KITERAIL_NATS_URL` | URL for NATS JetStream server | `nats://localhost:4222` |
 | `KITERAIL_POSTGRES_DSN` | PostgreSQL connection DSN string | `postgres://kiterail:kiterail@localhost:5432/kiterail?sslmode=disable` |
 | `KITERAIL_API_KEYS` | Comma-separated `token:agent_id` pairs for proxy auth | (none — proxy rejects requests if unset) |
 
@@ -101,23 +103,34 @@ KiteRail is configured via environment variables or a `kiterail.yaml` file.
 
 KiteRail's codebase is structured around distinct internal Go packages:
 
-- `internal/proxy`: The core HTTP proxy intercepting MCP & API traffic with bearer auth middleware.
-- `internal/opa`: Integration with the Open Policy Agent engine evaluating requests against Rego decision rules.
-- `internal/events`: NATS JetStream publisher for durable asynchronous event delivery.
-- `internal/quarantine`: Manages the lifecycle of requests held for Human-in-the-Loop review.
-- `internal/quarantine/handler`: REST API for listing, approving, and denying quarantined items.
-- `internal/ledger`: Hash-chained, Postgres-backed tamper-evident audit log handler.
+- `internal/proxy`: The core HTTP proxy intercepting traffic.
+- `internal/opaengine`: Integration with Open Policy Agent for Rego rules.
+- `internal/policystore`: Policy CRUD operations.
+- `internal/quarantine`: Manages requests held for human review.
+- `internal/ledger`: Postgres-backed tamper-evident audit log.
 
-## Cloud Dashboard (Planned Managed Service)
+## Why not just use...?
 
-KiteRail Cloud (planned enterprise service) will provide a managed multi-tenant dashboard featuring a real-time Human-in-the-Loop inbox, topology visualization, RBAC, and SIEM export capabilities (Splunk / Datadog). 
+| Tool | What it governs | Where KiteRail is different |
+|---|---|---|
+| Cloudflare AI Gateway / Portkey | LLM prompts and responses | KiteRail governs the *tool calls that leave the LLM*. Prompts are safe; refunds are not. |
+| Lakera Guard / NeMo Guardrails | Prompt injection and unsafe outputs | KiteRail assumes the LLM is compromised and firewalls what it can *do*. |
+| OPA + a homegrown proxy | Same primitives | KiteRail packages the proxy, hash-chained ledger, HITL queue, and MCP wire-format parsing—the parts that are hard to get right under concurrency. |
 
-For enterprise inquiries, custom deployments, or early access interest, please open a GitHub Discussion or reach out via repository issues.
+## Local Dashboard
+
+![KiteRail Dashboard](./assets/dashboard.png)
+
+The included React dashboard gives you a real-time Human-in-the-Loop inbox and an audit ledger view. 
+
+Interested in piloting KiteRail on real agent workflows? I am looking for design partners in fintech or agent-DevOps. Open a [GitHub Discussion](https://github.com/austinchima/KiteRail/discussions) or reach me directly at [email].
 
 ## Contributing
 
-We welcome contributions from the community. PRs are always welcome, but please open an issue first for major changes or architectural discussions to ensure alignment.
+PRs are welcome. Please open an issue first for major architectural changes so we can agree on the approach before you write code.
 
 ## License
 
 This project is licensed under the Apache 2.0 License. See the [LICENSE](LICENSE) file for details.
+
+See [CHANGELOG.md](CHANGELOG.md) for release notes.

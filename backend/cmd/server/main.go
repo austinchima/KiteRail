@@ -17,8 +17,8 @@ import (
 	"github.com/austinchima/kiterail/internal/config"
 	"github.com/austinchima/kiterail/internal/dashboard"
 	"github.com/austinchima/kiterail/internal/ledger"
-	"github.com/austinchima/kiterail/internal/opa"
-	"github.com/austinchima/kiterail/internal/policy"
+	"github.com/austinchima/kiterail/internal/opaengine"
+	"github.com/austinchima/kiterail/internal/policystore"
 	"github.com/austinchima/kiterail/internal/proxy"
 	"github.com/austinchima/kiterail/internal/quarantine"
 )
@@ -28,11 +28,25 @@ var (
 	startTime = time.Now()
 )
 
-func corsMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With")
+func corsMiddleware(allowedOrigins []string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			origin := r.Header.Get("Origin")
+			allowed := false
+			for _, o := range allowedOrigins {
+				if o == "*" || o == origin {
+					allowed = true
+					break
+				}
+			}
+			if allowed && origin != "" {
+				w.Header().Set("Access-Control-Allow-Origin", origin)
+			} else if len(allowedOrigins) > 0 && allowedOrigins[0] == "*" {
+				w.Header().Set("Access-Control-Allow-Origin", "*")
+			}
+
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With")
 
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusOK)
@@ -40,7 +54,8 @@ func corsMiddleware(next http.Handler) http.Handler {
 		}
 
 		next.ServeHTTP(w, r)
-	})
+		})
+	}
 }
 
 func main() {
@@ -48,7 +63,11 @@ func main() {
 	port := flag.String("port", "", "Override listen address")
 	flag.Parse()
 
-	logger, _ := zap.NewProduction()
+	logger, err := zap.NewProduction()
+	if err != nil {
+		fmt.Printf("Failed to initialize logger: %v\n", err)
+		os.Exit(1)
+	}
 	defer logger.Sync()
 
 	fmt.Println("🚂 Starting KiteRail v1.0.0...")
@@ -61,7 +80,7 @@ func main() {
 		cfg.ListenAddr = *port
 	}
 	if cfg.TargetURL == "" {
-		cfg.TargetURL = "http://localhost:8081"
+		logger.Fatal("KITERAIL_TARGET_URL must be set")
 	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -90,7 +109,7 @@ func main() {
 	// NATS will be re-introduced in v1.1 for real-time streaming.
 
 	// Init OPA engine.
-	engine, err := opa.New(ctx, cfg.PolicyDir)
+	engine, err := opaengine.New(ctx, cfg.PolicyDir)
 	if err != nil {
 		logger.Fatal("Failed to initialise OPA engine", zap.Error(err))
 	}
@@ -106,21 +125,21 @@ func main() {
 		logger.Fatal("Failed to initialise ledger store", zap.Error(err))
 	}
 
-	pStore, err := policy.New(cfg.PolicyDir)
+	pStore, err := policystore.New(cfg.PolicyDir)
 	if err != nil {
 		logger.Fatal("Failed to initialise policy store", zap.Error(err))
 	}
 
 	// Wire up handlers.
-	// proxy.NewHandler accepts a nil publisher — it skips NATS publishing when nil.
-	proxyHandler, err := proxy.NewHandler(logger, cfg.TargetURL, engine, nil, qStore, lStore)
+	// proxy.NewHandler uses NoOpPublisher to skip NATS publishing when nil.
+	proxyHandler, err := proxy.NewHandler(logger, cfg.TargetURL, engine, proxy.NoOpPublisher{}, qStore, lStore)
 	if err != nil {
 		logger.Fatal("Failed to create proxy handler", zap.Error(err))
 	}
 
 	quarantineHandler := quarantine.NewHandler(qStore, lStore, logger)
 	ledgerHandler := ledger.NewHandler(lStore, logger)
-	policyHandler := policy.NewHandler(pStore, engine, logger)
+	policyHandler := policystore.NewHandler(pStore, engine, logger)
 	dashboardHandler := dashboard.NewHandler(lStore, qStore, logger)
 	sseHandler := proxy.NewSSEHandler() // returns 501 in v1.0
 
@@ -157,7 +176,7 @@ func main() {
 
 	// Middleware chain: CORS → Auth → Mux.
 	authenticatedHandler := proxy.AuthMiddleware(cfg.APIKeys, logger, mux)
-	finalHandler := corsMiddleware(authenticatedHandler)
+	finalHandler := corsMiddleware(cfg.AllowedOrigins)(authenticatedHandler)
 
 	srv := &http.Server{
 		Addr:    cfg.ListenAddr,

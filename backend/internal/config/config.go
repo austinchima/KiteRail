@@ -8,24 +8,26 @@ import (
 )
 
 type Config struct {
-	ListenAddr  string            `yaml:"listen_addr"`
-	TargetURL   string            `yaml:"target_url"`
-	PolicyDir   string            `yaml:"policy_dir"`
-	NatsURL     string            `yaml:"nats_url"`
-	PostgresDSN string            `yaml:"postgres_dsn"`
-	LogLevel    string            `yaml:"log_level"`
-	APIKeys     map[string]string `yaml:"api_keys"`
+	ListenAddr     string            `yaml:"listen_addr"`
+	TargetURL      string            `yaml:"target_url"`
+	PolicyDir      string            `yaml:"policy_dir"`
+	NatsURL        string            `yaml:"nats_url"`
+	PostgresDSN    string            `yaml:"postgres_dsn"`
+	LogLevel       string            `yaml:"log_level"`
+	APIKeys        map[string]string `yaml:"api_keys"`
+	AllowedOrigins []string          `yaml:"allowed_origins"`
 }
 
 // Load loads the configuration from the specified file or environment variables.
 func Load(path string) (*Config, error) {
 	cfg := &Config{
-		ListenAddr:  ":8080",
-		PolicyDir:   "./policies",
-		NatsURL:     "nats://localhost:4222",
-		PostgresDSN: "postgres://kiterail:kiterail@localhost:5432/kiterail?sslmode=disable",
-		LogLevel:    "info",
-		APIKeys:     make(map[string]string),
+		ListenAddr:     ":8080",
+		PolicyDir:      "./policies",
+		NatsURL:        "nats://localhost:4222",
+		PostgresDSN:    "postgres://kiterail:kiterail@localhost:5432/kiterail?sslmode=disable",
+		LogLevel:       "info",
+		APIKeys:        make(map[string]string),
+		AllowedOrigins: []string{"*"},
 	}
 
 	if path != "" {
@@ -59,6 +61,13 @@ func Load(path string) (*Config, error) {
 	}
 	if val := os.Getenv("KITERAIL_LOG_LEVEL"); val != "" {
 		cfg.LogLevel = val
+	}
+	if val := os.Getenv("KITERAIL_ALLOWED_ORIGINS"); val != "" {
+		origins := strings.Split(val, ",")
+		for i := range origins {
+			origins[i] = strings.TrimSpace(origins[i])
+		}
+		cfg.AllowedOrigins = origins
 	}
 	if val := os.Getenv("KITERAIL_API_KEYS"); val != "" {
 		pairs := strings.Split(val, ",")
