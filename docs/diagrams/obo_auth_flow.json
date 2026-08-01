@@ -1,17 +1,32 @@
 {
-  "t": "Two-Identity (OBO) Flow",
+  "t": "On-Behalf-Of Auth Flow",
   "i": [
-    ["End User", "user", "Human invoking the agent"],
-    ["AI Agent", "function", "Agent operating on behalf"],
-    ["Identity Provider", "security", "OAuth/SAML IdP"],
-    ["KiteRail", "firewall", "Validates dual context"],
-    ["Target System", "server", "Protected resource"]
+    ["AI Agent", "function", "Initiates tool call"],
+    ["Ingress Middleware", "firewall", "Validates Auth & Extracts Identity"],
+    ["IdP (Okta/Entra)", "security", "Identity Provider"],
+    ["OPA Engine", "security", "Identity merged into eval context"],
+    ["Target API", "api", "Receives sub claim header"]
   ],
   "v": [
     [
-      [[0, -6, -4], [1, -6, 4], [2, 0, -5], [3, 0, 4], [4, 6, 4]],
-      [[0, 2], [0, 1], [1, 3], [3, 2], [3, 4]]
+      [
+        [0, -8, 0],
+        [1, -4, 0],
+        [2, -4, -6],
+        [3, 0, 0],
+        [4, 6, 0]
+      ],
+      [
+        [0, 1],
+        [1, 2],
+        [2, 1],
+        [1, 3],
+        [3, 4]
+      ]
     ]
   ],
-  "_": { "f": "compact", "v": "1.0" }
+  "_": {
+    "f": "compact",
+    "v": "1.0"
+  }
 }

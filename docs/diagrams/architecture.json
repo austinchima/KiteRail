@@ -1,23 +1,47 @@
 {
   "t": "KiteRail Detailed Architecture",
   "i": [
-    ["Human User", "user", "End user initiating request"],
-    ["AI Agent", "function", "Executes autonomous actions"],
-    ["Identity Provider", "security", "Validates OBO user identity"],
-    ["KiteRail Proxy", "firewall", "Intercepts agent API traffic"],
-    ["OPA Engine", "security", "Evaluates rules (Allow/Deny)"],
-    ["Target API", "api", "Upstream enterprise system"],
-    ["Quarantine Store", "storage", "Holds flagged requests"],
-    ["HITL Dashboard", "web", "Human approval interface"],
-    ["Compliance Officer", "user", "Reviews held actions"],
-    ["NATS JetStream", "queue", "Event message streaming"],
-    ["Audit Ledger", "storage", "Immutable Postgres logs"]
+    ["Autonomous AI Agent", "function", "Agent Plane"],
+    ["Ingress Middleware", "firewall", "CORS & Auth"],
+    ["MCP Interceptor", "api", "Parses tool calls"],
+    ["OPA Policy Engine", "security", "Rego evaluator"],
+    ["Policy Simulator", "function", "Dry-run endpoint"],
+    ["Policy Store", "storage", "Rego rules"],
+    ["Audit Ledger", "storage", "Postgres hash-chain"],
+    ["Quarantine Store", "storage", "Pending payloads"],
+    ["HITL Dashboard", "web", "Human approval"],
+    ["Target API", "api", "Target system"]
   ],
   "v": [
     [
-      [[0, -8, -8], [1, -8, 0], [2, -4, -8], [3, 0, 0], [4, 0, -4], [5, 8, 0], [6, 4, -4], [7, 8, -4], [8, 12, -4], [9, 0, 6], [10, 6, 6]],
-      [[0, 2], [0, 1], [2, 1], [1, 3], [3, 4], [4, 3], [3, 5], [3, 6], [6, 7], [8, 7], [7, 5], [3, 9], [7, 9], [9, 10]]
+      [
+        [0, -8, 0],
+        [1, -4, 0],
+        [2, 0, 0],
+        [3, 4, 0],
+        [4, 4, -4],
+        [5, 8, -4],
+        [6, 8, 8],
+        [7, 4, 4],
+        [8, 8, 4],
+        [9, 8, 0]
+      ],
+      [
+        [0, 1],
+        [1, 2],
+        [2, 3],
+        [4, 3],
+        [3, 5],
+        [3, 6],
+        [3, 7],
+        [3, 9],
+        [8, 7],
+        [9, 6]
+      ]
     ]
   ],
-  "_": { "f": "compact", "v": "1.0" }
+  "_": {
+    "f": "compact",
+    "v": "1.0"
+  }
 }
