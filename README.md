@@ -195,6 +195,14 @@ KiteRail is organized into six planes (agent, ingress, control, data, human, tar
 
 👉 **See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** for the full design, request lifecycle, extension points, and correctness discussion.
 
+## Roadmap
+
+We are currently building towards R2, the version of KiteRail designed for production pilots with our first design partners. Here is what is coming next:
+
+- **Protocol agnosticism:** Moving beyond MCP. We are abstracting the interception layer so KiteRail can enforce policies on standard REST and gRPC traffic.
+- **The compliance stack:** Pre-built, auditor-tested OPA policy packs for specific regulatory frameworks. We will ship out-of-the-box rules for the EU AI Act (Article 14), SOX, HIPAA, and PCI-DSS.
+- **Two-identity authorization:** Right now, KiteRail checks if an agent is allowed to take an action. Next, we will check if the human user who triggered the agent is allowed to take that action. This stops privilege escalation.
+
 ## Why not just use...?
 
 | Tool | What it governs | Where KiteRail is different |
