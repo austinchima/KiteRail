@@ -56,6 +56,20 @@ Server-Sent Events endpoints accept the token as a query parameter (`?token=<tok
 
 ---
 
+## End-to-End Request Sequence
+
+To understand how KiteRail's endpoints work together, here is a complete lifecycle of an intercepted agent request that gets flagged for human review:
+
+1. **Agent:** Sends a tool call `POST /` (e.g., refund $5000).
+2. **Proxy:** Checks the OPA policy. The policy returns `quarantine`.
+3. **Proxy:** Returns `202 Accepted` to the agent with a `quarantine_id`. The request pauses here.
+4. **Human Reviewer:** Calls `GET /api/v1/quarantine` and sees the pending refund.
+5. **Human Reviewer:** Calls `POST /api/v1/quarantine/<id>/approve`.
+6. **Proxy:** Replays the exact original payload to the downstream API.
+7. **Proxy:** Writes an `approved` entry to the cryptographic ledger.
+
+---
+
 ## `GET /api/v1/health`
 
 Public endpoint. Use for liveness probes and CI smoke tests.
@@ -381,6 +395,40 @@ curl -H "Authorization: Bearer sk_dev_123" \
     }
   ]
 }
+```
+
+---
+
+## CLI Usage Examples
+
+Everything the dashboard does is a thin wrapper over the REST API. You never need the UI. You can use standard `curl` commands to manage the proxy.
+
+```bash
+# List all quarantined requests
+curl -H "Authorization: Bearer sk_dev_123" \
+  http://localhost:8080/api/v1/quarantine
+
+# Approve a quarantined request (replays it to the target)
+curl -X POST -H "Authorization: Bearer sk_dev_123" \
+  http://localhost:8080/api/v1/quarantine/<id>/approve
+
+# Deny a quarantined request
+curl -X POST -H "Authorization: Bearer sk_dev_123" \
+  http://localhost:8080/api/v1/quarantine/<id>/deny
+
+# Read the audit ledger
+curl -H "Authorization: Bearer sk_dev_123" \
+  http://localhost:8080/api/v1/ledger?limit=50
+
+# Verify the ledger's hash chain is intact
+curl -X POST -H "Authorization: Bearer sk_dev_123" \
+  http://localhost:8080/api/v1/ledger/verify
+
+# Dry-run a policy without executing
+curl -X POST -H "Authorization: Bearer sk_dev_123" \
+  -H "Content-Type: application/json" \
+  http://localhost:8080/api/v1/policies/simulate \
+  -d '{"tool": "stripe.charge.refund", "arguments": {"amount": 2500}}'
 ```
 
 ---
