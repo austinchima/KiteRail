@@ -10,7 +10,7 @@ Looking for design partners running agentic workflows in fintech or DevOps.
 
 ## The Problem
 
-Autonomous AI agents calling real-world APIs introduce uncontrolled risk. Regulations like the EU AI Act, SOX, and PCI-DSS mandate human oversight for high-risk AI decisions. 
+Autonomous AI agents calling real-world APIs introduce uncontrolled risk. Compliance in regulated industries requires a human in the loop for high-risk AI decisions — and an audit trail that proves it happened.
 
 KiteRail v1 targets fintech tool-call governance (like refunds and wire transfers). The architecture is domain-agnostic: Rego policies work just as well for `kubectl` or HR APIs, but we are focusing on one vertical first.
 
@@ -200,7 +200,7 @@ KiteRail is organized into six planes (agent, ingress, control, data, human, tar
 We are currently building towards R2, the version of KiteRail designed for production pilots with our first design partners. Here is what is coming next:
 
 - **Protocol agnosticism:** Moving beyond MCP. We are abstracting the interception layer so KiteRail can enforce policies on standard REST and gRPC traffic.
-- **The compliance stack:** Pre-built, auditor-tested OPA policy packs for specific regulatory frameworks. We will ship out-of-the-box rules for the EU AI Act (Article 14), SOX, HIPAA, and PCI-DSS.
+- **The compliance stack:** Pre-built OPA policy packs for common compliance requirements. Drop them in and your agent workflows are audit-ready out of the box.
 - **Two-identity authorization:** Right now, KiteRail checks if an agent is allowed to take an action. Next, we will check if the human user who triggered the agent is allowed to take that action. This stops privilege escalation.
 
 ## Why not just use...?
