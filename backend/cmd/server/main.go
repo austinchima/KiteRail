@@ -21,6 +21,8 @@ import (
 	"github.com/austinchima/kiterail/internal/policystore"
 	"github.com/austinchima/kiterail/internal/proxy"
 	"github.com/austinchima/kiterail/internal/quarantine"
+	"github.com/austinchima/kiterail/internal/metrics"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 var (
@@ -56,6 +58,15 @@ func corsMiddleware(allowedOrigins []string) func(http.Handler) http.Handler {
 		next.ServeHTTP(w, r)
 		})
 	}
+}
+
+func prometheusMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		metrics.HttpRequestsTotal.Inc()
+		next.ServeHTTP(w, r)
+		metrics.HttpRequestDuration.Observe(time.Since(start).Seconds())
+	})
 }
 
 func main() {
@@ -174,9 +185,15 @@ func main() {
 	mux.Handle("/api/v1/dashboard/stats", dashboardHandler)
 	mux.Handle("/", proxyHandler)
 
-	// Middleware chain: CORS → Auth → Mux.
+	// ⚠️ Metrics Endpoint is completely open by default for easy Prometheus scraping.
+	// If you wish to secure it with KiteRail API keys, wrap it like so:
+	// mux.Handle("/metrics", proxy.AuthMiddleware(cfg.APIKeys, logger, promhttp.Handler()))
+	mux.Handle("/metrics", promhttp.Handler())
+
+	// Middleware chain: Metrics → CORS → Auth → Mux.
 	authenticatedHandler := proxy.AuthMiddleware(cfg.APIKeys, logger, mux)
-	finalHandler := corsMiddleware(cfg.AllowedOrigins)(authenticatedHandler)
+	corsHandler := corsMiddleware(cfg.AllowedOrigins)(authenticatedHandler)
+	finalHandler := prometheusMiddleware(corsHandler)
 
 	srv := &http.Server{
 		Addr:    cfg.ListenAddr,
