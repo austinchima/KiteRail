@@ -2,7 +2,7 @@
 
 > *KiteRail treats AI agent safety as a systems problem, not a prompt problem. The LLM does one bounded step — deciding what tool to call. Everything safety-critical (policy, routing, audit, human review) is deterministic Go code you can read, diff, and test. If your agent can spend money, that shouldn't depend on how a model was fine-tuned.*
 
-![Go](https://img.shields.io/badge/Go-1.22%2B-00ADD8?logo=go) ![License](https://img.shields.io/badge/License-Apache_2.0-blue) ![OPA](https://img.shields.io/badge/Policy-OPA_Rego-7d9fc3)
+![Go](https://img.shields.io/badge/Go-1.26%2B-00ADD8?logo=go) ![License](https://img.shields.io/badge/License-Apache_2.0-blue) ![OPA](https://img.shields.io/badge/Policy-OPA_Rego-7d9fc3)
 
 ## Status
 v1.0.0. Built solo by a 2026 new grad.
