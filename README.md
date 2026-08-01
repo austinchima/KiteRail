@@ -102,7 +102,7 @@ flowchart TB
 git clone https://github.com/austinchima/KiteRail.git
 cd KiteRail
 
-# Start all services (proxy, Postgres, frontend dashboard)
+# Start all services (proxy + Postgres)
 docker compose up -d
 
 # Test the health endpoint
@@ -141,6 +141,40 @@ decision := {"action": "quarantine", "rule": "refund_over_limit", "explanation":
 ```
 
 > **Note:** A `policies/default_deny.rego` file ensures all unrecognized actions are blocked by default.
+
+## Using KiteRail from the CLI
+
+Everything the dashboard does is a thin wrapper over the REST API. You never need the UI.
+
+> 🚀 **Roadmap:** We are currently building a dedicated `kiterail` CLI tool to make these commands even easier (e.g. `kiterail quarantine approve <id>`). Stay tuned!
+
+```bash
+# List all quarantined requests
+curl -H "Authorization: Bearer sk_dev_123" \
+  http://localhost:8080/api/v1/quarantine
+
+# Approve a quarantined request (replays it to the target)
+curl -X POST -H "Authorization: Bearer sk_dev_123" \
+  http://localhost:8080/api/v1/quarantine/<id>/approve
+
+# Deny a quarantined request
+curl -X POST -H "Authorization: Bearer sk_dev_123" \
+  http://localhost:8080/api/v1/quarantine/<id>/deny
+
+# Read the audit ledger
+curl -H "Authorization: Bearer sk_dev_123" \
+  http://localhost:8080/api/v1/ledger?limit=50
+
+# Verify the ledger's hash chain is intact
+curl -X POST -H "Authorization: Bearer sk_dev_123" \
+  http://localhost:8080/api/v1/ledger/verify
+
+# Dry-run a policy without executing (killer feature)
+curl -X POST -H "Authorization: Bearer sk_dev_123" \
+  -H "Content-Type: application/json" \
+  http://localhost:8080/api/v1/policies/simulate \
+  -d '{"tool": "stripe.charge.refund", "arguments": {"amount": 2500}}'
+```
 
 ## Configuration
 
