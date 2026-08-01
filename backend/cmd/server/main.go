@@ -15,17 +15,16 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/austinchima/kiterail/internal/config"
-	"github.com/austinchima/kiterail/internal/events"
+	"github.com/austinchima/kiterail/internal/dashboard"
 	"github.com/austinchima/kiterail/internal/ledger"
 	"github.com/austinchima/kiterail/internal/opa"
 	"github.com/austinchima/kiterail/internal/policy"
 	"github.com/austinchima/kiterail/internal/proxy"
 	"github.com/austinchima/kiterail/internal/quarantine"
-	"github.com/austinchima/kiterail/internal/dashboard"
 )
 
 var (
-	version   = "dev"
+	version   = "1.0.0"
 	startTime = time.Now()
 )
 
@@ -52,7 +51,7 @@ func main() {
 	logger, _ := zap.NewProduction()
 	defer logger.Sync()
 
-	fmt.Println("🚂 Starting KiteRail...")
+	fmt.Println("🚂 Starting KiteRail v1.0.0...")
 
 	cfg, err := config.Load(*configPath)
 	if err != nil {
@@ -62,13 +61,13 @@ func main() {
 		cfg.ListenAddr = *port
 	}
 	if cfg.TargetURL == "" {
-		cfg.TargetURL = "http://localhost:8081" // fallback target
+		cfg.TargetURL = "http://localhost:8081"
 	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	// Connect to Postgres
+	// Connect to Postgres with retry.
 	var db *sql.DB
 	for i := 0; i < 5; i++ {
 		db, err = sql.Open("postgres", cfg.PostgresDSN)
@@ -78,7 +77,7 @@ func main() {
 				break
 			}
 		}
-		logger.Warn("Failed to connect to postgres, retrying...", zap.Error(err))
+		logger.Warn("Failed to connect to postgres, retrying...", zap.Error(err), zap.Int("attempt", i+1))
 		time.Sleep(2 * time.Second)
 	}
 	if err != nil {
@@ -86,84 +85,47 @@ func main() {
 	}
 	defer db.Close()
 
-	// Connect to NATS
-	var pub *events.Publisher
-	for i := 0; i < 5; i++ {
-		pub, err = events.New(ctx, cfg.NatsURL)
-		if err == nil {
-			break
-		}
-		logger.Warn("Failed to connect to NATS, retrying...", zap.Error(err))
-		time.Sleep(2 * time.Second)
-	}
-	if err != nil {
-		logger.Fatal("Failed to connect to NATS after 5 attempts", zap.Error(err))
-	}
-	defer pub.Close()
+	// NOTE: NATS JetStream is intentionally not initialised in v1.0.
+	// All audit events are written directly to the Postgres ledger.
+	// NATS will be re-introduced in v1.1 for real-time streaming.
 
-	// Connect to NATS (Subscriber)
-	var sub *events.Subscriber
-	for i := 0; i < 5; i++ {
-		sub, err = events.NewSubscriber(ctx, cfg.NatsURL)
-		if err == nil {
-			break
-		}
-		logger.Warn("Failed to connect NATS subscriber, retrying...", zap.Error(err))
-		time.Sleep(2 * time.Second)
-	}
-	if err != nil {
-		logger.Fatal("Failed to connect NATS subscriber after 5 attempts", zap.Error(err))
-	}
-	defer sub.Close()
-
-	if err := sub.Start(ctx); err != nil {
-		logger.Fatal("Failed to start NATS subscriber", zap.Error(err))
-	}
-
-	// Init OPA
+	// Init OPA engine.
 	engine, err := opa.New(ctx, cfg.PolicyDir)
 	if err != nil {
-		logger.Fatal("Failed to initialize OPA engine", zap.Error(err))
+		logger.Fatal("Failed to initialise OPA engine", zap.Error(err))
 	}
 
-	// Init Stores
+	// Init stores.
 	qStore, err := quarantine.New(db)
 	if err != nil {
-		logger.Fatal("Failed to initialize quarantine store", zap.Error(err))
+		logger.Fatal("Failed to initialise quarantine store", zap.Error(err))
 	}
 
 	lStore, err := ledger.New(db)
 	if err != nil {
-		logger.Fatal("Failed to initialize ledger store", zap.Error(err))
+		logger.Fatal("Failed to initialise ledger store", zap.Error(err))
 	}
 
-	pStore, err := policy.New(db)
+	pStore, err := policy.New(cfg.PolicyDir)
 	if err != nil {
-		logger.Fatal("Failed to initialize policy store", zap.Error(err))
+		logger.Fatal("Failed to initialise policy store", zap.Error(err))
 	}
 
-	// Quarantine Handler
-	quarantineHandler := quarantine.NewHandler(qStore, pub, lStore, logger)
-
-	// Ledger Handler
-	ledgerHandler := ledger.NewHandler(lStore, logger)
-
-	// Proxy Handler
-	proxyHandler, err := proxy.NewHandler(logger, cfg.TargetURL, engine, pub, qStore, lStore, pStore)
+	// Wire up handlers.
+	// proxy.NewHandler accepts a nil publisher — it skips NATS publishing when nil.
+	proxyHandler, err := proxy.NewHandler(logger, cfg.TargetURL, engine, nil, qStore, lStore)
 	if err != nil {
 		logger.Fatal("Failed to create proxy handler", zap.Error(err))
 	}
 
-	// Policy Handler
-	policyHandler := policy.NewHandler(pStore, logger)
-
-	// Dashboard Handler
+	quarantineHandler := quarantine.NewHandler(qStore, lStore, logger)
+	ledgerHandler := ledger.NewHandler(lStore, logger)
+	policyHandler := policy.NewHandler(pStore, engine, logger)
 	dashboardHandler := dashboard.NewHandler(lStore, qStore, logger)
-
-	// SSE Handler
-	sseHandler := proxy.NewSSEHandler(sub)
+	sseHandler := proxy.NewSSEHandler() // returns 501 in v1.0
 
 	mux := http.NewServeMux()
+
 	mux.HandleFunc("/api/v1/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
@@ -172,7 +134,6 @@ func main() {
 			"uptime_seconds": time.Since(startTime).Seconds(),
 			"services": map[string]bool{
 				"postgres": db.PingContext(ctx) == nil,
-				"nats":     pub != nil && pub.IsHealthy(),
 			},
 		})
 	})
@@ -186,16 +147,15 @@ func main() {
 	stripLedger := http.StripPrefix("/api/v1/ledger", ledgerHandler)
 	mux.Handle("/api/v1/ledger", stripLedger)
 	mux.Handle("/api/v1/ledger/", stripLedger)
-	
+
 	stripPolicy := http.StripPrefix("/api/v1/policies", policyHandler)
 	mux.Handle("/api/v1/policies", stripPolicy)
 	mux.Handle("/api/v1/policies/", stripPolicy)
 
 	mux.Handle("/api/v1/dashboard/stats", dashboardHandler)
-
 	mux.Handle("/", proxyHandler)
 
-	// Wrap mux: CORS (outermost) -> Auth -> Mux
+	// Middleware chain: CORS → Auth → Mux.
 	authenticatedHandler := proxy.AuthMiddleware(cfg.APIKeys, logger, mux)
 	finalHandler := corsMiddleware(authenticatedHandler)
 
@@ -205,9 +165,9 @@ func main() {
 	}
 
 	go func() {
-		logger.Info("Starting server", zap.String("addr", cfg.ListenAddr))
+		logger.Info("KiteRail listening", zap.String("addr", cfg.ListenAddr))
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			logger.Fatal("Failed to start server", zap.Error(err))
+			logger.Fatal("Server failed", zap.Error(err))
 		}
 	}()
 
@@ -218,7 +178,7 @@ func main() {
 	defer shutdownCancel()
 
 	if err := srv.Shutdown(shutdownCtx); err != nil {
-		logger.Error("Failed to shutdown server gracefully", zap.Error(err))
+		logger.Error("Graceful shutdown failed", zap.Error(err))
 	}
 
 	logger.Info("Shutdown complete")

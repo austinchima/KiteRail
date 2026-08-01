@@ -2,25 +2,12 @@ package policy
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
-
-	_ "github.com/lib/pq"
 )
-
-// Schema represents the policies table.
-const Schema = `
-CREATE TABLE IF NOT EXISTS policies (
-    id TEXT PRIMARY KEY,
-    title TEXT,
-    trigger_rule TEXT,
-    action_type TEXT,
-    enabled BOOLEAN,
-    created_at TIMESTAMP,
-    updated_at TIMESTAMP
-);
-`
 
 // Policy represents a security policy.
 type Policy struct {
@@ -31,131 +18,133 @@ type Policy struct {
 	Enabled     bool      `json:"enabled"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
+	Code        string    `json:"code,omitempty"`
 }
 
-// Store represents a Postgres-backed policy store.
+// Store represents a filesystem-backed policy store.
 type Store struct {
-	db *sql.DB
+	policyDir string
 }
 
-// New creates a new Store and seeds default policies.
-func New(db *sql.DB) (*Store, error) {
-	if _, err := db.Exec(Schema); err != nil {
-		return nil, fmt.Errorf("failed to create policies schema: %w", err)
+// New creates a new Store.
+func New(policyDir string) (*Store, error) {
+	if err := os.MkdirAll(policyDir, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create policy directory: %w", err)
 	}
-	
-	s := &Store{db: db}
-	if err := s.SeedDefaults(context.Background()); err != nil {
-		return nil, fmt.Errorf("failed to seed default policies: %w", err)
-	}
-	
-	return s, nil
-}
-
-// SeedDefaults populates the database with the initial policies if they do not exist.
-func (s *Store) SeedDefaults(ctx context.Context) error {
-	defaults := []Policy{
-		{
-			ID:          "POL-882-991",
-			Title:       "Require Approval for Refunds > $1,000",
-			TriggerRule: "Action == stripe.charge.refund",
-			ActionType:  "Block execution. Route to Manager Approval Gate.",
-			Enabled:     true,
-		},
-		{
-			ID:          "POL-104-552",
-			Title:       "DLP: Scrub PII/PCI (SSN, Cards) from LLM Prompts",
-			TriggerRule: "Egress to OpenAI / Anthropic",
-			ActionType:  "Apply regex masking for SSN, CC, and Phone Numbers.",
-			Enabled:     true,
-		},
-		{
-			ID:          "POL-404-001",
-			Title:       "Block Unauthorized Wire Transfers (> $10K)",
-			TriggerRule: "Action == swift.transfer AND amount > 10000 AND role != 'RiskOfficer'",
-			ActionType:  "Deny instantly. Alert Risk Ops.",
-			Enabled:     true,
-		},
-		{
-			ID:          "POL-912-701",
-			Title:       "Rate Limit: Plaid API Calls",
-			TriggerRule: "Egress to Plaid API",
-			ActionType:  "Throttle to 100 requests per minute.",
-			Enabled:     false,
-		},
-	}
-
-	for _, p := range defaults {
-		var exists bool
-		err := s.db.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM policies WHERE id = $1)", p.ID).Scan(&exists)
-		if err != nil {
-			return err
-		}
-		if !exists {
-			_, err = s.db.ExecContext(ctx,
-				"INSERT INTO policies (id, title, trigger_rule, action_type, enabled, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7)",
-				p.ID, p.Title, p.TriggerRule, p.ActionType, p.Enabled, time.Now(), time.Now(),
-			)
-			if err != nil {
-				return err
-			}
-		}
-	}
-	return nil
+	return &Store{policyDir: policyDir}, nil
 }
 
 // List returns all policies.
 func (s *Store) List(ctx context.Context) ([]Policy, error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT id, title, trigger_rule, action_type, enabled, created_at, updated_at FROM policies ORDER BY created_at ASC")
+	entries, err := os.ReadDir(s.policyDir)
 	if err != nil {
-		return nil, fmt.Errorf("failed to query policies: %w", err)
+		return nil, fmt.Errorf("failed to read policy directory: %w", err)
 	}
-	defer rows.Close()
 
 	var policies []Policy
-	for rows.Next() {
-		var p Policy
-		if err := rows.Scan(&p.ID, &p.Title, &p.TriggerRule, &p.ActionType, &p.Enabled, &p.CreatedAt, &p.UpdatedAt); err != nil {
-			return nil, fmt.Errorf("failed to scan policy: %w", err)
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
 		}
-		policies = append(policies, p)
+		
+		name := entry.Name()
+		if !strings.HasSuffix(name, ".rego") && !strings.HasSuffix(name, ".rego.disabled") {
+			continue
+		}
+
+		enabled := strings.HasSuffix(name, ".rego")
+		id := strings.TrimSuffix(name, ".rego.disabled")
+		id = strings.TrimSuffix(id, ".rego")
+
+		path := filepath.Join(s.policyDir, name)
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+
+		content, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+
+		// Simple parsing to extract title, trigger, action from comments if possible
+		title, trigger, action := parseMetadata(string(content))
+		if title == "" {
+			title = id
+		}
+
+		policies = append(policies, Policy{
+			ID:          id,
+			Title:       title,
+			TriggerRule: trigger,
+			ActionType:  action,
+			Enabled:     enabled,
+			CreatedAt:   info.ModTime(), // Fallback to modtime
+			UpdatedAt:   info.ModTime(),
+			Code:        string(content),
+		})
 	}
 	return policies, nil
 }
 
-// UpdateEnabled toggles the enabled state of a policy.
+// UpdateEnabled toggles the enabled state of a policy by renaming the file.
 func (s *Store) UpdateEnabled(ctx context.Context, id string, enabled bool) error {
-	res, err := s.db.ExecContext(ctx, "UPDATE policies SET enabled = $1, updated_at = $2 WHERE id = $3", enabled, time.Now(), id)
-	if err != nil {
-		return fmt.Errorf("failed to update policy: %w", err)
+	basePath := filepath.Join(s.policyDir, id)
+	regoPath := basePath + ".rego"
+	disabledPath := basePath + ".rego.disabled"
+
+	if enabled {
+		if _, err := os.Stat(disabledPath); err == nil {
+			return os.Rename(disabledPath, regoPath)
+		}
+	} else {
+		if _, err := os.Stat(regoPath); err == nil {
+			return os.Rename(regoPath, disabledPath)
+		}
 	}
-	
-	rowsAffected, err := res.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if rowsAffected == 0 {
-		return fmt.Errorf("policy not found")
-	}
-	
-	return nil
+	return nil // Already in desired state or doesn't exist
 }
 
-// GetEnabledPolicies returns a map of enabled policy IDs.
-func (s *Store) GetEnabledPolicies(ctx context.Context) (map[string]bool, error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT id FROM policies WHERE enabled = true")
-	if err != nil {
-		return nil, fmt.Errorf("failed to query enabled policies: %w", err)
+// Save writes a policy to disk.
+func (s *Store) Save(ctx context.Context, id string, content string, enabled bool) error {
+	ext := ".rego"
+	if !enabled {
+		ext = ".rego.disabled"
 	}
-	defer rows.Close()
+	path := filepath.Join(s.policyDir, id+ext)
+	
+	// If it already exists with the other extension, remove it
+	otherExt := ".rego.disabled"
+	if !enabled {
+		otherExt = ".rego"
+	}
+	os.Remove(filepath.Join(s.policyDir, id+otherExt))
+	
+	return os.WriteFile(path, []byte(content), 0644)
+}
 
-	enabled := make(map[string]bool)
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, fmt.Errorf("failed to scan policy id: %w", err)
+func parseMetadata(content string) (title, trigger, action string) {
+	lines := strings.Split(content, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "# Title:") {
+			title = strings.TrimSpace(strings.TrimPrefix(line, "# Title:"))
+		} else if strings.HasPrefix(line, "# Trigger:") {
+			trigger = strings.TrimSpace(strings.TrimPrefix(line, "# Trigger:"))
+		} else if strings.HasPrefix(line, "# Action:") {
+			action = strings.TrimSpace(strings.TrimPrefix(line, "# Action:"))
 		}
-		enabled[id] = true
 	}
-	return enabled, nil
+	
+	// Fallback if not specifically tagged, just grab first comment as title
+	if title == "" {
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "# ") {
+				title = strings.TrimPrefix(line, "# ")
+				break
+			}
+		}
+	}
+	return
 }

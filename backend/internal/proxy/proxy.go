@@ -24,7 +24,7 @@ type EvalInput struct {
 	Agent           string                 `json:"agent"`
 	Timestamp       time.Time              `json:"timestamp"`
 	RawMethod       string                 `json:"raw_method"`
-	EnabledPolicies map[string]bool        `json:"enabled_policies"`
+
 }
 
 // ProxyDecision represents the result of the policy evaluation.
@@ -57,10 +57,6 @@ type LedgerStore interface {
 	Append(ctx context.Context, entry ledger.LedgerEntry) error
 }
 
-// PolicyStore defines the interface for querying enabled policies.
-type PolicyStore interface {
-	GetEnabledPolicies(ctx context.Context) (map[string]bool, error)
-}
 
 // Handler is the reverse proxy HTTP handler.
 type Handler struct {
@@ -70,12 +66,12 @@ type Handler struct {
 	publisher       EventPublisher
 	quarantineStore QuarantineStore
 	ledgerStore     LedgerStore
-	policyStore     PolicyStore
+
 	reverseProxy    *httputil.ReverseProxy
 }
 
 // NewHandler creates a new proxy handler.
-func NewHandler(logger *zap.Logger, targetURL string, engine OPAEngine, publisher EventPublisher, store QuarantineStore, lStore LedgerStore, pStore PolicyStore) (*Handler, error) {
+func NewHandler(logger *zap.Logger, targetURL string, engine OPAEngine, publisher EventPublisher, store QuarantineStore, lStore LedgerStore) (*Handler, error) {
 	u, err := url.Parse(targetURL)
 	if err != nil {
 		return nil, err
@@ -90,7 +86,7 @@ func NewHandler(logger *zap.Logger, targetURL string, engine OPAEngine, publishe
 		publisher:       publisher,
 		quarantineStore: store,
 		ledgerStore:     lStore,
-		policyStore:     pStore,
+
 		reverseProxy:    rp,
 	}, nil
 }
@@ -154,11 +150,6 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	enabledPolicies, err := h.policyStore.GetEnabledPolicies(r.Context())
-	if err != nil {
-		h.logger.Error("Failed to fetch enabled policies", zap.Error(err))
-		enabledPolicies = map[string]bool{} // Fallback to empty map
-	}
 
 	input := EvalInput{
 		Tool:            tool,
@@ -166,7 +157,6 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Agent:           AgentFromContext(r.Context()),
 		Timestamp:       time.Now(),
 		RawMethod:       method,
-		EnabledPolicies: enabledPolicies,
 	}
 
 	start := time.Now()
