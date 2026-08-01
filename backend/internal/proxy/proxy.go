@@ -15,6 +15,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/austinchima/kiterail/internal/ledger"
+	"github.com/austinchima/kiterail/internal/metrics"
 )
 
 // EvalInput represents the payload evaluated by the OPA engine.
@@ -178,6 +179,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	decision.LatencyMs = latency
 	h.logger.Info("Proxy decision", zap.Any("decision", decision))
+	metrics.DecisionsTotal.WithLabelValues(decision.Action).Inc()
 
 	hashSum := sha256.Sum256(body)
 	payloadHash := hex.EncodeToString(hashSum[:])
