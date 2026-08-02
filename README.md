@@ -17,9 +17,6 @@ KiteRail targets fintech tool-call governance (like refunds and wire transfers) 
 
 ## How It Works
 
-![KiteRail Architecture](./assets/architecture.svg)
-
-<!--
 ```mermaid
 flowchart TB
     subgraph Client["🤖 Agent Plane"]
@@ -90,7 +87,6 @@ flowchart TB
     class T,DENIED upstream
     class A agent
 ```
--->
 
 ## Features
 
