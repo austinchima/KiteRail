@@ -171,13 +171,29 @@ curl -H "Authorization: Bearer sk_dev_123" \
 
 ### `POST /api/v1/quarantine/:id/approve`
 
-Approve a quarantined item. Note: In v1.0, this marks the action approved in the ledger but does NOT automatically replay it to the target yet. Replay routing is planned for v1.1.
+Approve a quarantined item. KiteRail will:
+
+1. Mark the item `approved` in the database (conflict-safe — concurrent calls return `409`).
+2. **Replay the original payload verbatim to `KITERAIL_TARGET_URL`** via `POST`.
+3. Append an `approved_replayed` ledger entry recording who approved it and the outcome.
+
+The replay sets the following headers on the upstream request so the target can identify the context:
+
+| Header | Value |
+|---|---|
+| `X-KiteRail-Agent` | Original agent identity from the quarantined entry |
+| `X-KiteRail-Quarantine-ID` | The quarantine item ID |
+| `X-KiteRail-Approved-By` | Value from the `approved_by` request body field |
 
 **Request**
 ```bash
 curl -X POST -H "Authorization: Bearer sk_dev_123" \
-  http://localhost:8080/api/v1/quarantine/q_01H8XYZ.../approve
+  -H "Content-Type: application/json" \
+  http://localhost:8080/api/v1/quarantine/q_01H8XYZ.../approve \
+  -d '{"approved_by": "jane@example.com"}'
 ```
+
+`approved_by` is optional — defaults to `"api"` if omitted.
 
 **Response — `200 OK`**
 ```json
@@ -408,10 +424,11 @@ Everything the dashboard does is a thin wrapper over the REST API. You never nee
 curl -H "Authorization: Bearer sk_dev_123" \
   http://localhost:8080/api/v1/quarantine
 
-# Approve a quarantined request 
-# Note: In v1.0, this marks the action approved in the ledger but does NOT automatically replay it to the target yet. Replay routing is planned for v1.1.
+# Approve a quarantined request and replay it to the target
 curl -X POST -H "Authorization: Bearer sk_dev_123" \
-  http://localhost:8080/api/v1/quarantine/<id>/approve
+  -H "Content-Type: application/json" \
+  http://localhost:8080/api/v1/quarantine/<id>/approve \
+  -d '{"approved_by": "jane@example.com"}'
 
 # Deny a quarantined request
 curl -X POST -H "Authorization: Bearer sk_dev_123" \

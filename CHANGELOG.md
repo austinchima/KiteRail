@@ -10,11 +10,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - `POST /api/v1/policies/simulate` endpoint for dry-running policy evaluations without triggering audit or ledger side effects.
 - `KITERAIL_ALLOWED_ORIGINS` configuration variable for CORS support.
+- **Quarantine replay on approval**: `POST /api/v1/quarantine/:id/approve` now replays the original stored payload verbatim to `KITERAIL_TARGET_URL` after marking the item approved. The replay sets `X-KiteRail-Agent`, `X-KiteRail-Quarantine-ID`, and `X-KiteRail-Approved-By` headers on the upstream request so the target has full HITL context. A `502 Bad Gateway` is returned if the upstream call fails.
+- `ErrAlreadyResolved` sentinel error in `internal/quarantine` — returned when attempting to approve or deny an item that has already been resolved.
+- `ErrNotFound` sentinel error in `internal/quarantine` for missing quarantine items.
+- Handler tests for the four approval replay paths: success, 409 conflict, 404 not found, and 502 target error (`internal/quarantine/handler_test.go`).
 
 ### Changed
 - Refactored `internal/policy` to `internal/policystore` and `internal/opa` to `internal/opaengine` for better package boundary clarity.
 - `KITERAIL_TARGET_URL` is now strictly required with no default value. Server fails fast if unset.
 - Updated README with a "Why KiteRail vs X" table and refined positioning.
+- `quarantine.NewHandler` now accepts `targetURL string` to enable direct HTTP replay on approval. `main.go` passes `cfg.TargetURL`.
+- `quarantine.Store.Approve()` and `quarantine.Store.Deny()` now use `WHERE status = 'pending'` and check `RowsAffected` — concurrent resolution attempts are conflict-safe, with exactly one caller succeeding and all others receiving `ErrAlreadyResolved` (HTTP `409 Conflict`).
+
+### Fixed
+- **Quarantine approve did not replay**: Approving a quarantined request marked it in the ledger but never forwarded the payload to the target API. The approving human reviewer had no way to complete the intended action. Now fully implemented end-to-end.
+- **Double-approve vulnerability**: Concurrent `approve` calls on the same quarantine item could previously both succeed, potentially triggering duplicate actions on the target. Now safe.
 
 ## [1.1.0-alpha] - 2026-08-01
 

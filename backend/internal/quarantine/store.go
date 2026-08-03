@@ -3,11 +3,19 @@ package quarantine
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
 	_ "github.com/lib/pq"
 )
+
+// ErrAlreadyResolved is returned when attempting to approve or deny an entry
+// that has already been resolved (approved or denied).
+var ErrAlreadyResolved = errors.New("quarantine item already resolved")
+
+// ErrNotFound is returned when a quarantine entry cannot be found by ID.
+var ErrNotFound = errors.New("quarantine item not found")
 
 // Schema represents the quarantine table.
 const Schema = `
@@ -97,26 +105,44 @@ func (s *Store) List(ctx context.Context, status string) ([]QuarantineEntry, err
 	return entries, nil
 }
 
-// Approve marks a quarantine entry as approved.
+// Approve marks a quarantine entry as approved. It only updates rows whose
+// status is 'pending', so concurrent approve/deny calls are safe — exactly
+// one caller will see rowsAffected == 1; all others get ErrAlreadyResolved.
 func (s *Store) Approve(ctx context.Context, id, approvedBy string) error {
-	_, err := s.db.ExecContext(ctx,
-		"UPDATE quarantine SET status = $1, resolved_at = $2, resolved_by = $3 WHERE id = $4",
+	res, err := s.db.ExecContext(ctx,
+		"UPDATE quarantine SET status = $1, resolved_at = $2, resolved_by = $3 WHERE id = $4 AND status = 'pending'",
 		"approved", time.Now(), approvedBy, id,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to approve quarantine entry: %w", err)
 	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to check rows affected: %w", err)
+	}
+	if n == 0 {
+		// Either the ID doesn't exist or it was already resolved.
+		return ErrAlreadyResolved
+	}
 	return nil
 }
 
-// Deny marks a quarantine entry as denied.
+// Deny marks a quarantine entry as denied. Like Approve, it only acts on
+// 'pending' entries to prevent concurrent double-resolution.
 func (s *Store) Deny(ctx context.Context, id, deniedBy, reason string) error {
-	_, err := s.db.ExecContext(ctx,
-		"UPDATE quarantine SET status = $1, resolved_at = $2, resolved_by = $3, reason = $4 WHERE id = $5",
+	res, err := s.db.ExecContext(ctx,
+		"UPDATE quarantine SET status = $1, resolved_at = $2, resolved_by = $3, reason = $4 WHERE id = $5 AND status = 'pending'",
 		"denied", time.Now(), deniedBy, reason, id,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to deny quarantine entry: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to check rows affected: %w", err)
+	}
+	if n == 0 {
+		return ErrAlreadyResolved
 	}
 	return nil
 }

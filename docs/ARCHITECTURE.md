@@ -145,7 +145,7 @@ sequenceDiagram
     end
 ```
 
-Every arrow in this diagram maps to a function call in [`internal/proxy/proxy.go`](../backend/internal/proxy/proxy.go). If you understand this diagram, you understand the hot path.
+Every arrow in this diagram maps to a function call in [`internal/proxy/proxy.go`](../backend/internal/proxy/proxy.go) (the inline proxy path) or [`internal/quarantine/handler.go`](../backend/internal/quarantine/handler.go) (the HITL approval and replay path). If you understand this diagram, you understand the hot path.
 
 ### A note on ordering
 
@@ -228,6 +228,10 @@ This is documented in the [v1.0 CHANGELOG](../CHANGELOG.md#100---2026-08-01) bec
 ### 3. Graceful shutdown
 
 `main.go` installs a signal handler on `SIGINT` / `SIGTERM`. On shutdown, the HTTP server stops accepting new connections and waits up to 10 seconds for in-flight requests to complete before closing the Postgres connection pool. No half-written ledger entries.
+
+### 4. Conflict-safe quarantine resolution
+
+`Approve()` and `Deny()` both use `WHERE status = 'pending'` and check `RowsAffected`. If two reviewers hit approve simultaneously, exactly one succeeds; the other receives `409 Conflict`. The winning caller's approval is then replayed to the target. This prevents double-spend and double-replay of the same payload.
 
 ---
 
