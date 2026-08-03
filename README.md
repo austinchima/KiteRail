@@ -123,6 +123,8 @@ curl -X POST http://localhost:8080/ \
 
 The included React dashboard provides a real-time human-in-the-loop inbox and an audit ledger view. 
 
+> **Note:** The real-time SSE streaming endpoint for live dashboard updates returns `501 Not Implemented` in v1.0. The React frontend will gracefully fallback without live data until the NATS re-integration lands in v1.1.
+
 Interested in piloting KiteRail on real agent workflows? I am looking for design partners in fintech or agent-DevOps. Open a [GitHub Discussion](https://github.com/austinchima/KiteRail/discussions).
 
 ## Writing Policies
