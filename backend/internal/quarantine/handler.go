@@ -132,15 +132,16 @@ func (h *Handler) approveEntry(w http.ResponseWriter, r *http.Request, id string
 }
 
 // replayToTarget forwards the stored payload to the downstream API and records
-// the outcome in the ledger. It returns a non-nil error only if the target
-// call itself fails (network error or non-2xx response).
+// the outcome in the ledger. On failure it also marks the quarantine row as
+// 'replay_failed' so the item resurfaces in the PENDING inbox for retry.
+// It returns a non-nil error only if the target call itself fails.
 func (h *Handler) replayToTarget(r *http.Request, id string, entry QuarantineEntry, approvedBy string) error {
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, h.targetURL, bytes.NewReader(entry.Payload))
 	if err != nil {
+		h.markReplayFailed(r, id)
 		return fmt.Errorf("failed to build replay request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	// Forward the original agent identity so the target sees who initiated the call.
 	req.Header.Set("X-KiteRail-Agent", entry.AgentID)
 	req.Header.Set("X-KiteRail-Quarantine-ID", id)
 	req.Header.Set("X-KiteRail-Approved-By", approvedBy)
@@ -148,18 +149,32 @@ func (h *Handler) replayToTarget(r *http.Request, id string, entry QuarantineEnt
 	resp, err := h.httpClient.Do(req)
 	if err != nil {
 		h.recordReplayLedger(r, id, entry, approvedBy, "replay_error")
+		h.markReplayFailed(r, id)
 		return fmt.Errorf("upstream request failed: %w", err)
 	}
 	defer resp.Body.Close()
-	io.Copy(io.Discard, resp.Body) // drain so the connection can be reused
+	io.Copy(io.Discard, resp.Body)
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		h.recordReplayLedger(r, id, entry, approvedBy, fmt.Sprintf("replay_upstream_%d", resp.StatusCode))
+		h.markReplayFailed(r, id)
 		return fmt.Errorf("upstream returned %d", resp.StatusCode)
 	}
 
 	h.recordReplayLedger(r, id, entry, approvedBy, "approved_replayed")
 	return nil
+}
+
+// markReplayFailed transitions the quarantine row to 'replay_failed' so it
+// reappears in the PENDING inbox. Errors are logged but do not fail the
+// request — the 502 response to the reviewer is already set at this point.
+func (h *Handler) markReplayFailed(r *http.Request, id string) {
+	if err := h.store.MarkReplayFailed(r.Context(), id); err != nil {
+		h.logger.Error("failed to mark quarantine as replay_failed",
+			zap.String("id", id),
+			zap.Error(err),
+		)
+	}
 }
 
 // recordReplayLedger appends a HITL approval + replay outcome entry to the

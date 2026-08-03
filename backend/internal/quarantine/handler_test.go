@@ -48,7 +48,7 @@ func (m *mockStore) List(_ context.Context, status string) ([]QuarantineEntry, e
 
 func (m *mockStore) Approve(_ context.Context, id, approvedBy string) error {
 	e, ok := m.entries[id]
-	if !ok || e.Status != "pending" {
+	if !ok || (e.Status != "pending" && e.Status != "replay_failed") {
 		return ErrAlreadyResolved
 	}
 	e.Status = "approved"
@@ -58,11 +58,20 @@ func (m *mockStore) Approve(_ context.Context, id, approvedBy string) error {
 
 func (m *mockStore) Deny(_ context.Context, id, deniedBy, reason string) error {
 	e, ok := m.entries[id]
-	if !ok || e.Status != "pending" {
+	if !ok || (e.Status != "pending" && e.Status != "replay_failed") {
 		return ErrAlreadyResolved
 	}
 	e.Status = "denied"
 	e.ResolvedBy = deniedBy
+	return nil
+}
+
+func (m *mockStore) MarkReplayFailed(_ context.Context, id string) error {
+	e, ok := m.entries[id]
+	if !ok {
+		return nil // best-effort; don't surface as error
+	}
+	e.Status = "replay_failed"
 	return nil
 }
 
@@ -132,11 +141,13 @@ func (h *handlerMock) approveAndReplay(w http.ResponseWriter, r *http.Request, i
 
 	resp, err := h.httpClient.Do(req)
 	if err != nil {
+		_ = h.store.MarkReplayFailed(r.Context(), id)
 		http.Error(w, `{"error": "target replay failed"}`, http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		_ = h.store.MarkReplayFailed(r.Context(), id)
 		http.Error(w, `{"error": "target replay failed"}`, http.StatusBadGateway)
 		return
 	}
@@ -235,4 +246,42 @@ func TestApprove_TargetError_Returns502(t *testing.T) {
 	h.approveAndReplay(w, req, "7")
 
 	assert.Equal(t, http.StatusBadGateway, w.Code)
+	// Item must be replay_failed so the PENDING inbox surfaces it for retry.
+	assert.Equal(t, "replay_failed", store.entries["7"].Status)
+}
+
+func TestApprove_RetryAfterFailure_Succeeds(t *testing.T) {
+	// First call: target returns 500 → item goes replay_failed.
+	// Second call: target is healthy → item goes approved.
+	callCount := 0
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		if callCount == 1 {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer target.Close()
+
+	store := newMockStore(&QuarantineEntry{
+		ID: "8", AgentID: "a", ToolName: "t",
+		Payload: []byte(`{}`), Status: "pending", CreatedAt: time.Now(),
+	})
+	h := handlerWithMock(store, target.URL)
+
+	// First approve attempt — target is down.
+	req1 := httptest.NewRequest(http.MethodPost, "/api/v1/quarantine/8/approve", strings.NewReader(`{}`))
+	w1 := httptest.NewRecorder()
+	h.approveAndReplay(w1, req1, "8")
+	require.Equal(t, http.StatusBadGateway, w1.Code)
+	require.Equal(t, "replay_failed", store.entries["8"].Status)
+
+	// Second approve attempt — target is healthy now.
+	req2 := httptest.NewRequest(http.MethodPost, "/api/v1/quarantine/8/approve", strings.NewReader(`{}`))
+	w2 := httptest.NewRecorder()
+	h.approveAndReplay(w2, req2, "8")
+	assert.Equal(t, http.StatusOK, w2.Code)
+	assert.Equal(t, "approved", store.entries["8"].Status)
+	assert.Equal(t, 2, callCount)
 }
