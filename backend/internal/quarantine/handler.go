@@ -2,6 +2,7 @@ package quarantine
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +15,17 @@ import (
 
 	"github.com/austinchima/kiterail/internal/ledger"
 )
+
+// maxReplayAttempts is the number of times the handler will attempt to replay
+// an approved payload to the target before giving up and marking the item as
+// replay_failed. Package-level so tests can override without goroutine races.
+var maxReplayAttempts = 3
+
+// replayBackoff is the wait between successive replay attempts. Two entries
+// for three total attempts (attempt 0 fires immediately, then 1s, then 3s).
+// Package-level so tests can set to []time.Duration{0, 0} for instant retries.
+var replayBackoff = []time.Duration{time.Second, 3 * time.Second}
+
 
 // Handler exposes REST endpoints for the quarantine queue.
 type Handler struct {
@@ -113,32 +125,63 @@ func (h *Handler) approveEntry(w http.ResponseWriter, r *http.Request, id string
 		return
 	}
 
-	// Replay the original payload to the downstream target.
-	replayErr := h.replayToTarget(r, id, entry, body.ApprovedBy)
-	if replayErr != nil {
-		h.logger.Error("target replay failed",
-			zap.String("id", id),
-			zap.String("target", h.targetURL),
-			zap.Error(replayErr),
-		)
-		http.Error(w,
-			fmt.Sprintf(`{"error": "target replay failed", "explanation": %q}`, replayErr.Error()),
-			http.StatusBadGateway,
-		)
-		return
-	}
-
+	// Respond immediately — the human's decision is recorded. Replay happens
+	// asynchronously so the reviewer is never blocked on downstream latency or
+	// transient failures.
+	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "approved", "id": id})
+
+	// Fire replay in a goroutine. Use context.Background() so it outlives the
+	// HTTP request context. entryCopy prevents a data race on the pointer.
+	entryCopy := entry
+	approvedBy := body.ApprovedBy
+	go h.replayWithRetry(context.Background(), id, entryCopy, approvedBy)
 }
 
-// replayToTarget forwards the stored payload to the downstream API and records
-// the outcome in the ledger. On failure it also marks the quarantine row as
-// 'replay_failed' so the item resurfaces in the PENDING inbox for retry.
-// It returns a non-nil error only if the target call itself fails.
-func (h *Handler) replayToTarget(r *http.Request, id string, entry QuarantineEntry, approvedBy string) error {
-	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, h.targetURL, bytes.NewReader(entry.Payload))
+
+// replayWithRetry attempts to replay the approved payload up to maxReplayAttempts
+// times with exponential backoff between attempts. It is intended to be called
+// in a goroutine — it blocks until the replay succeeds or all attempts are
+// exhausted, then marks the item as replay_failed if needed.
+func (h *Handler) replayWithRetry(ctx context.Context, id string, entry QuarantineEntry, approvedBy string) {
+	for attempt := 0; attempt < maxReplayAttempts; attempt++ {
+		if attempt > 0 {
+			delay := replayBackoff[attempt-1]
+			select {
+			case <-ctx.Done():
+				h.logger.Warn("replay context cancelled before retry",
+					zap.String("id", id), zap.Int("attempt", attempt))
+				h.markReplayFailed(ctx, id)
+				return
+			case <-time.After(delay):
+			}
+		}
+
+		if err := h.doReplay(ctx, id, entry, approvedBy); err == nil {
+			return // success — ledger entry already written inside doReplay
+		} else {
+			h.logger.Warn("replay attempt failed",
+				zap.String("id", id),
+				zap.Int("attempt", attempt+1),
+				zap.Int("maxAttempts", maxReplayAttempts),
+				zap.Error(err),
+			)
+		}
+	}
+
+	h.logger.Error("all replay attempts exhausted, marking as replay_failed",
+		zap.String("id", id),
+		zap.Int("attempts", maxReplayAttempts),
+	)
+	h.markReplayFailed(ctx, id)
+}
+
+// doReplay performs a single replay attempt — POSTs the stored payload to the
+// target and records a ledger entry. It does NOT handle retries or status
+// transitions; those are managed by replayWithRetry.
+func (h *Handler) doReplay(ctx context.Context, id string, entry QuarantineEntry, approvedBy string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, h.targetURL, bytes.NewReader(entry.Payload))
 	if err != nil {
-		h.markReplayFailed(r, id)
 		return fmt.Errorf("failed to build replay request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
@@ -148,28 +191,26 @@ func (h *Handler) replayToTarget(r *http.Request, id string, entry QuarantineEnt
 
 	resp, err := h.httpClient.Do(req)
 	if err != nil {
-		h.recordReplayLedger(r, id, entry, approvedBy, "replay_error")
-		h.markReplayFailed(r, id)
+		h.recordReplayLedger(ctx, id, entry, approvedBy, "replay_error")
 		return fmt.Errorf("upstream request failed: %w", err)
 	}
 	defer resp.Body.Close()
 	io.Copy(io.Discard, resp.Body)
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		h.recordReplayLedger(r, id, entry, approvedBy, fmt.Sprintf("replay_upstream_%d", resp.StatusCode))
-		h.markReplayFailed(r, id)
+		h.recordReplayLedger(ctx, id, entry, approvedBy, fmt.Sprintf("replay_upstream_%d", resp.StatusCode))
 		return fmt.Errorf("upstream returned %d", resp.StatusCode)
 	}
 
-	h.recordReplayLedger(r, id, entry, approvedBy, "approved_replayed")
+	h.recordReplayLedger(ctx, id, entry, approvedBy, "approved_replayed")
 	return nil
 }
 
 // markReplayFailed transitions the quarantine row to 'replay_failed' so it
-// reappears in the PENDING inbox. Errors are logged but do not fail the
-// request — the 502 response to the reviewer is already set at this point.
-func (h *Handler) markReplayFailed(r *http.Request, id string) {
-	if err := h.store.MarkReplayFailed(r.Context(), id); err != nil {
+// reappears in the PENDING inbox. Errors are logged but do not propagate —
+// this is best-effort cleanup after a failed replay.
+func (h *Handler) markReplayFailed(ctx context.Context, id string) {
+	if err := h.store.MarkReplayFailed(ctx, id); err != nil {
 		h.logger.Error("failed to mark quarantine as replay_failed",
 			zap.String("id", id),
 			zap.Error(err),
@@ -178,13 +219,12 @@ func (h *Handler) markReplayFailed(r *http.Request, id string) {
 }
 
 // recordReplayLedger appends a HITL approval + replay outcome entry to the
-// tamper-evident ledger. Errors here are logged but do not fail the request —
-// the approval and replay already happened.
-func (h *Handler) recordReplayLedger(r *http.Request, id string, entry QuarantineEntry, approvedBy, decision string) {
+// tamper-evident ledger. Errors are logged but do not propagate.
+func (h *Handler) recordReplayLedger(ctx context.Context, id string, entry QuarantineEntry, approvedBy, decision string) {
 	if h.lStore == nil {
 		return
 	}
-	if err := h.lStore.Append(r.Context(), ledger.LedgerEntry{
+	if err := h.lStore.Append(ctx, ledger.LedgerEntry{
 		Agent:       approvedBy,
 		Tool:        entry.ToolName,
 		Decision:    decision,
@@ -194,6 +234,7 @@ func (h *Handler) recordReplayLedger(r *http.Request, id string, entry Quarantin
 		h.logger.Error("failed to write replay ledger entry", zap.String("id", id), zap.Error(err))
 	}
 }
+
 
 func (h *Handler) denyEntry(w http.ResponseWriter, r *http.Request, id string) {
 	var body struct {
