@@ -148,7 +148,7 @@ func main() {
 		logger.Fatal("Failed to create proxy handler", zap.Error(err))
 	}
 
-	quarantineHandler := quarantine.NewHandler(qStore, lStore, logger)
+	quarantineHandler := quarantine.NewHandler(qStore, lStore, logger, cfg.TargetURL)
 	ledgerHandler := ledger.NewHandler(lStore, logger)
 	policyHandler := policystore.NewHandler(pStore, engine, logger)
 	dashboardHandler := dashboard.NewHandler(lStore, qStore, logger)
