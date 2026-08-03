@@ -34,3 +34,7 @@ web/
 # Build artifacts
 backend/server.exe
 dist/
+
+# Scratch / local tooling output
+graphify-out/
+*.md.bak
