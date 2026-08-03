@@ -171,7 +171,7 @@ curl -H "Authorization: Bearer sk_dev_123" \
 
 ### `POST /api/v1/quarantine/:id/approve`
 
-Approve a quarantined item. The original request is replayed to the target API and the approval is written to the audit ledger.
+Approve a quarantined item. Note: In v1.0, this marks the action approved in the ledger but does NOT automatically replay it to the target yet. Replay routing is planned for v1.1.
 
 **Request**
 ```bash
@@ -408,7 +408,8 @@ Everything the dashboard does is a thin wrapper over the REST API. You never nee
 curl -H "Authorization: Bearer sk_dev_123" \
   http://localhost:8080/api/v1/quarantine
 
-# Approve a quarantined request (replays it to the target)
+# Approve a quarantined request 
+# Note: In v1.0, this marks the action approved in the ledger but does NOT automatically replay it to the target yet. Replay routing is planned for v1.1.
 curl -X POST -H "Authorization: Bearer sk_dev_123" \
   http://localhost:8080/api/v1/quarantine/<id>/approve
 
