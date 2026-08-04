@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0-beta.1] - 2026-08-03
+
 ### Added
 - `POST /api/v1/policies/simulate` endpoint for dry-running policy evaluations without triggering audit or ledger side effects.
 - `KITERAIL_ALLOWED_ORIGINS` configuration variable for CORS support.
@@ -124,7 +126,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Apache 2.0 license
 - Production README with architecture diagram, quickstart, and policy authoring guide
 
-[Unreleased]: https://github.com/austinchima/KiteRail/compare/v1.1.0-alpha...HEAD
+[Unreleased]: https://github.com/austinchima/KiteRail/compare/v1.1.0-beta.1...HEAD
+[1.1.0-beta.1]: https://github.com/austinchima/KiteRail/compare/v1.1.0-alpha...v1.1.0-beta.1
 [1.1.0-alpha]: https://github.com/austinchima/KiteRail/compare/v1.0.0...v1.1.0-alpha
 [1.0.0]: https://github.com/austinchima/KiteRail/compare/v0.2.0...v1.0.0
 [0.2.0]: https://github.com/austinchima/KiteRail/compare/v0.1.0...v0.2.0
