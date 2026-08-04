@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0-beta.1] - 2026-08-03
+
 ### Added
 - `POST /api/v1/policies/simulate` endpoint for dry-running policy evaluations without triggering audit or ledger side effects.
 - `KITERAIL_ALLOWED_ORIGINS` configuration variable for CORS support.
@@ -23,8 +25,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `quarantine.Store.Approve()` and `quarantine.Store.Deny()` now use `WHERE status = 'pending'` and check `RowsAffected` — concurrent resolution attempts are conflict-safe, with exactly one caller succeeding and all others receiving `ErrAlreadyResolved` (HTTP `409 Conflict`).
 
 ### Fixed
+- **Data race in quarantine replay config** (`internal/quarantine`): `maxReplayAttempts` and `replayBackoff` were package-level mutable variables. A goroutine spawned by `TestApprove_Returns200Immediately` held a reference to them while subsequent tests wrote to them concurrently, causing the race detector to fail CI. Both variables are now instance fields on `Handler`, initialised in `NewHandler` to production defaults. Tests create per-handler instances with zero-delay backoff instead of mutating shared globals. `go test -race` passes cleanly on both `feature/quarantine-replay-failure-handling` and `main`.
+- **Goroutine leak in `TestApprove_Returns200Immediately`**: The test previously returned before its background replay goroutine finished (the goroutine was gated on a slow test-server). It now calls `close(ready)` then `<-done` to drain the goroutine before the test exits, preventing it from racing against writes in later tests.
 - **Quarantine approve did not replay**: Approving a quarantined request marked it in the ledger but never forwarded the payload to the target API. The approving human reviewer had no way to complete the intended action. Now fully implemented end-to-end.
 - **Double-approve vulnerability**: Concurrent `approve` calls on the same quarantine item could previously both succeed, potentially triggering duplicate actions on the target. Now safe.
+
+### Changed
+- Added inline comments to `corsMiddleware` in `cmd/server/main.go` clarifying the origin-check and header-set logic.
+- Reformatted `examples/test_payload.json` to pretty-printed JSON for readability.
 
 ## [1.1.0-alpha] - 2026-08-01
 
@@ -118,7 +126,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Apache 2.0 license
 - Production README with architecture diagram, quickstart, and policy authoring guide
 
-[Unreleased]: https://github.com/austinchima/KiteRail/compare/v1.1.0-alpha...HEAD
+[Unreleased]: https://github.com/austinchima/KiteRail/compare/v1.1.0-beta.1...HEAD
+[1.1.0-beta.1]: https://github.com/austinchima/KiteRail/compare/v1.1.0-alpha...v1.1.0-beta.1
 [1.1.0-alpha]: https://github.com/austinchima/KiteRail/compare/v1.0.0...v1.1.0-alpha
 [1.0.0]: https://github.com/austinchima/KiteRail/compare/v0.2.0...v1.0.0
 [0.2.0]: https://github.com/austinchima/KiteRail/compare/v0.1.0...v0.2.0

@@ -108,18 +108,22 @@ func buildHandler(mock *mockStore, targetURL string) *Handler {
 // ServeHTTP directly. This keeps tests self-contained without needing to
 // introduce a Store interface in production code.
 type approveDriver struct {
-	mock       *mockStore
-	logger     *zap.Logger
-	targetURL  string
-	httpClient *http.Client
+	mock              *mockStore
+	logger            *zap.Logger
+	targetURL         string
+	httpClient        *http.Client
+	maxReplayAttempts int
+	replayBackoff     []time.Duration
 }
 
 func newApproveDriver(mock *mockStore, targetURL string) *approveDriver {
 	return &approveDriver{
-		mock:       mock,
-		logger:     zap.NewNop(),
-		targetURL:  targetURL,
-		httpClient: &http.Client{Timeout: 5 * time.Second},
+		mock:              mock,
+		logger:            zap.NewNop(),
+		targetURL:         targetURL,
+		httpClient:        &http.Client{Timeout: 5 * time.Second},
+		maxReplayAttempts: defaultMaxReplayAttempts,
+		replayBackoff:     defaultReplayBackoff,
 	}
 }
 
@@ -161,16 +165,18 @@ func (d *approveDriver) approveEntry(w http.ResponseWriter, r *http.Request, id 
 		}()
 		// Build a real Handler for the replay logic, wiring mock for MarkReplayFailed.
 		h := &Handler{
-			store:      nil,
-			lStore:     nil,
-			logger:     d.logger,
-			targetURL:  d.targetURL,
-			httpClient: d.httpClient,
+			store:             nil,
+			lStore:            nil,
+			logger:            d.logger,
+			targetURL:         d.targetURL,
+			httpClient:        d.httpClient,
+			maxReplayAttempts: d.maxReplayAttempts,
+			replayBackoff:     d.replayBackoff,
 		}
 		// Use a custom replayWithRetry that calls mock.MarkReplayFailed.
-		for attempt := 0; attempt < maxReplayAttempts; attempt++ {
+		for attempt := 0; attempt < d.maxReplayAttempts; attempt++ {
 			if attempt > 0 {
-				time.Sleep(replayBackoff[attempt-1])
+				time.Sleep(d.replayBackoff[attempt-1])
 			}
 			if err := h.doReplay(context.Background(), id, entry, body.ApprovedBy); err == nil {
 				return
@@ -202,13 +208,15 @@ func TestApprove_Returns200Immediately(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer target.Close()
-	defer close(ready)
 
 	store := newMockStore(&QuarantineEntry{
 		ID: "1", AgentID: "a", ToolName: "t",
 		Payload: []byte(`{}`), Status: "pending", CreatedAt: time.Now(),
 	})
 	d := newApproveDriver(store, target.URL)
+	// Use zero-delay backoff so the background goroutine finishes quickly.
+	d.maxReplayAttempts = defaultMaxReplayAttempts
+	d.replayBackoff = []time.Duration{0, 0}
 	done := make(chan struct{})
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/quarantine/1/approve", strings.NewReader(`{}`))
@@ -220,6 +228,11 @@ func TestApprove_Returns200Immediately(t *testing.T) {
 	// Response must arrive well before the target would respond.
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.Less(t, time.Since(start), 500*time.Millisecond, "handler must not block on target")
+
+	// Unblock the target and wait for the goroutine to finish so it doesn't
+	// leak into subsequent tests and race against their writes.
+	close(ready)
+	<-done
 }
 
 func TestApprove_AlreadyResolved_Returns409(t *testing.T) {
@@ -255,17 +268,22 @@ func TestApprove_NotFound_Returns404(t *testing.T) {
 
 // ---- replayWithRetry unit tests (called synchronously) ----
 
-// zeroBackoff sets replayBackoff to instant delays for test speed and
-// restores it on cleanup.
-func zeroBackoff(t *testing.T) {
-	t.Helper()
-	orig := replayBackoff
-	replayBackoff = []time.Duration{0, 0}
-	t.Cleanup(func() { replayBackoff = orig })
+// zeroBackoff returns a new Handler with instant (zero-delay) retry intervals
+// and the given targetURL. Using per-handler fields avoids any shared mutable
+// state that would cause a data race when tests run in parallel.
+func zeroBackoffHandler(targetURL string) *Handler {
+	return &Handler{
+		store:             nil,
+		lStore:            nil,
+		logger:            zap.NewNop(),
+		targetURL:         targetURL,
+		httpClient:        &http.Client{Timeout: 5 * time.Second},
+		maxReplayAttempts: defaultMaxReplayAttempts,
+		replayBackoff:     []time.Duration{0, 0},
+	}
 }
 
 func TestReplayWithRetry_SucceedsFirstAttempt(t *testing.T) {
-	zeroBackoff(t)
 	var calls atomic.Int32
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
@@ -277,11 +295,7 @@ func TestReplayWithRetry_SucceedsFirstAttempt(t *testing.T) {
 		ID: "10", AgentID: "a", ToolName: "t",
 		Payload: []byte(`{"x":1}`), Status: "approved", CreatedAt: time.Now(),
 	})
-	h := &Handler{
-		store: nil, lStore: nil, logger: zap.NewNop(),
-		targetURL:  target.URL,
-		httpClient: &http.Client{Timeout: 5 * time.Second},
-	}
+	h := zeroBackoffHandler(target.URL)
 
 	// Override markReplayFailed to use mock — wrap via closure.
 	done := make(chan struct{})
@@ -296,7 +310,6 @@ func TestReplayWithRetry_SucceedsFirstAttempt(t *testing.T) {
 }
 
 func TestReplayWithRetry_TransientFailureThenSuccess(t *testing.T) {
-	zeroBackoff(t)
 	var calls atomic.Int32
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		n := calls.Add(1)
@@ -312,11 +325,7 @@ func TestReplayWithRetry_TransientFailureThenSuccess(t *testing.T) {
 		ID: "11", AgentID: "a", ToolName: "t",
 		Payload: []byte(`{}`), Status: "approved", CreatedAt: time.Now(),
 	})
-	h := &Handler{
-		store: nil, lStore: nil, logger: zap.NewNop(),
-		targetURL:  target.URL,
-		httpClient: &http.Client{Timeout: 5 * time.Second},
-	}
+	h := zeroBackoffHandler(target.URL)
 
 	done := make(chan struct{})
 	go func() {
@@ -329,11 +338,6 @@ func TestReplayWithRetry_TransientFailureThenSuccess(t *testing.T) {
 }
 
 func TestReplayWithRetry_ExhaustsAndMarksReplayFailed(t *testing.T) {
-	zeroBackoff(t)
-	orig := maxReplayAttempts
-	maxReplayAttempts = 3
-	t.Cleanup(func() { maxReplayAttempts = orig })
-
 	var calls atomic.Int32
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
@@ -349,8 +353,10 @@ func TestReplayWithRetry_ExhaustsAndMarksReplayFailed(t *testing.T) {
 	markFailedCalled := make(chan struct{}, 1)
 	h := &Handler{
 		store: nil, lStore: nil, logger: zap.NewNop(),
-		targetURL:  target.URL,
-		httpClient: &http.Client{Timeout: 5 * time.Second},
+		targetURL:         target.URL,
+		httpClient:        &http.Client{Timeout: 5 * time.Second},
+		maxReplayAttempts: 3,
+		replayBackoff:     []time.Duration{0, 0},
 	}
 
 	// Wrap replayWithRetry to intercept markReplayFailed.
@@ -360,9 +366,9 @@ func TestReplayWithRetry_ExhaustsAndMarksReplayFailed(t *testing.T) {
 	go func() {
 		defer close(done)
 		// Run the retry loop manually so we can use mock.MarkReplayFailed.
-		for attempt := 0; attempt < maxReplayAttempts; attempt++ {
+		for attempt := 0; attempt < h.maxReplayAttempts; attempt++ {
 			if attempt > 0 {
-				time.Sleep(replayBackoff[attempt-1])
+				time.Sleep(h.replayBackoff[attempt-1])
 			}
 			_ = h.doReplay(context.Background(), "12", *store.entries["12"], "api")
 		}
@@ -377,8 +383,6 @@ func TestReplayWithRetry_ExhaustsAndMarksReplayFailed(t *testing.T) {
 }
 
 func TestReplayWithRetry_ManualRetryAfterAutoExhaust(t *testing.T) {
-	zeroBackoff(t)
-
 	// Phase 1: target always fails → replay_failed after 3 attempts.
 	// Phase 2: reviewer clicks RETRY REPLAY → target is healthy → approved.
 	var calls atomic.Int32
@@ -396,18 +400,14 @@ func TestReplayWithRetry_ManualRetryAfterAutoExhaust(t *testing.T) {
 		ID: "13", AgentID: "a", ToolName: "t",
 		Payload: []byte(`{}`), Status: "approved", CreatedAt: time.Now(),
 	})
-	h := &Handler{
-		store: nil, lStore: nil, logger: zap.NewNop(),
-		targetURL:  target.URL,
-		httpClient: &http.Client{Timeout: 5 * time.Second},
-	}
+	h := zeroBackoffHandler(target.URL)
 
 	// --- Phase 1: auto-retry exhausts ---
 	phase1Done := make(chan struct{})
 	go func() {
 		defer close(phase1Done)
-		for attempt := 0; attempt < maxReplayAttempts; attempt++ {
-			if attempt > 0 { time.Sleep(replayBackoff[attempt-1]) }
+		for attempt := 0; attempt < h.maxReplayAttempts; attempt++ {
+			if attempt > 0 { time.Sleep(h.replayBackoff[attempt-1]) }
 			_ = h.doReplay(context.Background(), "13", *store.entries["13"], "api")
 		}
 		_ = store.MarkReplayFailed(context.Background(), "13")
