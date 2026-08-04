@@ -35,12 +35,14 @@ func corsMiddleware(allowedOrigins []string) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			origin := r.Header.Get("Origin")
 			allowed := false
+			// Check if the origin is allowed in the config.
 			for _, o := range allowedOrigins {
 				if o == "*" || o == origin {
 					allowed = true
 					break
 				}
 			}
+			// If allowed or set to all (*), set the Access-Control-Allow-Origin header.
 			if allowed && origin != "" {
 				w.Header().Set("Access-Control-Allow-Origin", origin)
 			} else if len(allowedOrigins) > 0 && allowedOrigins[0] == "*" {

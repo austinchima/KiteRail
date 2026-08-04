@@ -16,24 +16,23 @@ import (
 	"github.com/austinchima/kiterail/internal/ledger"
 )
 
-// maxReplayAttempts is the number of times the handler will attempt to replay
-// an approved payload to the target before giving up and marking the item as
-// replay_failed. Package-level so tests can override without goroutine races.
-var maxReplayAttempts = 3
+// defaultMaxReplayAttempts is the production retry limit.
+const defaultMaxReplayAttempts = 3
 
-// replayBackoff is the wait between successive replay attempts. Two entries
-// for three total attempts (attempt 0 fires immediately, then 1s, then 3s).
-// Package-level so tests can set to []time.Duration{0, 0} for instant retries.
-var replayBackoff = []time.Duration{time.Second, 3 * time.Second}
+// defaultReplayBackoff is the production wait between retry attempts.
+// Two entries cover the gap between attempt-0→1 and attempt-1→2.
+var defaultReplayBackoff = []time.Duration{time.Second, 3 * time.Second}
 
 
 // Handler exposes REST endpoints for the quarantine queue.
 type Handler struct {
-	store      *Store
-	lStore     *ledger.Store
-	logger     *zap.Logger
-	targetURL  string
-	httpClient *http.Client
+	store             *Store
+	lStore            *ledger.Store
+	logger            *zap.Logger
+	targetURL         string
+	httpClient        *http.Client
+	maxReplayAttempts int
+	replayBackoff     []time.Duration
 }
 
 // NewHandler creates a new quarantine HTTP handler.
@@ -47,6 +46,8 @@ func NewHandler(store *Store, lStore *ledger.Store, logger *zap.Logger, targetUR
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
+		maxReplayAttempts: defaultMaxReplayAttempts,
+		replayBackoff:     defaultReplayBackoff,
 	}
 }
 
@@ -144,9 +145,9 @@ func (h *Handler) approveEntry(w http.ResponseWriter, r *http.Request, id string
 // in a goroutine — it blocks until the replay succeeds or all attempts are
 // exhausted, then marks the item as replay_failed if needed.
 func (h *Handler) replayWithRetry(ctx context.Context, id string, entry QuarantineEntry, approvedBy string) {
-	for attempt := 0; attempt < maxReplayAttempts; attempt++ {
+	for attempt := 0; attempt < h.maxReplayAttempts; attempt++ {
 		if attempt > 0 {
-			delay := replayBackoff[attempt-1]
+			delay := h.replayBackoff[attempt-1]
 			select {
 			case <-ctx.Done():
 				h.logger.Warn("replay context cancelled before retry",
@@ -163,7 +164,7 @@ func (h *Handler) replayWithRetry(ctx context.Context, id string, entry Quaranti
 			h.logger.Warn("replay attempt failed",
 				zap.String("id", id),
 				zap.Int("attempt", attempt+1),
-				zap.Int("maxAttempts", maxReplayAttempts),
+				zap.Int("maxAttempts", h.maxReplayAttempts),
 				zap.Error(err),
 			)
 		}
@@ -171,7 +172,7 @@ func (h *Handler) replayWithRetry(ctx context.Context, id string, entry Quaranti
 
 	h.logger.Error("all replay attempts exhausted, marking as replay_failed",
 		zap.String("id", id),
-		zap.Int("attempts", maxReplayAttempts),
+		zap.Int("attempts", h.maxReplayAttempts),
 	)
 	h.markReplayFailed(ctx, id)
 }
