@@ -105,12 +105,13 @@ func (s *Store) List(ctx context.Context, status string) ([]QuarantineEntry, err
 	return entries, nil
 }
 
-// Approve marks a quarantine entry as approved. It only updates rows whose
-// status is 'pending', so concurrent approve/deny calls are safe — exactly
-// one caller will see rowsAffected == 1; all others get ErrAlreadyResolved.
+// Approve marks a quarantine entry as approved. It accepts both 'pending' and
+// 'replay_failed' rows so that a failed replay can be retried without creating
+// a new quarantine item. Concurrent calls are still safe — exactly one caller
+// will see rowsAffected == 1; all others get ErrAlreadyResolved.
 func (s *Store) Approve(ctx context.Context, id, approvedBy string) error {
 	res, err := s.db.ExecContext(ctx,
-		"UPDATE quarantine SET status = $1, resolved_at = $2, resolved_by = $3 WHERE id = $4 AND status = 'pending'",
+		"UPDATE quarantine SET status = $1, resolved_at = $2, resolved_by = $3 WHERE id = $4 AND status IN ('pending', 'replay_failed')",
 		"approved", time.Now(), approvedBy, id,
 	)
 	if err != nil {
@@ -121,17 +122,32 @@ func (s *Store) Approve(ctx context.Context, id, approvedBy string) error {
 		return fmt.Errorf("failed to check rows affected: %w", err)
 	}
 	if n == 0 {
-		// Either the ID doesn't exist or it was already resolved.
+		// Either the ID doesn't exist or it was already resolved (approved/denied).
 		return ErrAlreadyResolved
 	}
 	return nil
 }
 
-// Deny marks a quarantine entry as denied. Like Approve, it only acts on
-// 'pending' entries to prevent concurrent double-resolution.
+// MarkReplayFailed transitions a quarantine entry from 'approved' back to
+// 'replay_failed' when the downstream target call fails after the human
+// approval step. This preserves the audit record of the approval decision
+// while surfacing the item in the PENDING inbox for retry.
+func (s *Store) MarkReplayFailed(ctx context.Context, id string) error {
+	_, err := s.db.ExecContext(ctx,
+		"UPDATE quarantine SET status = $1 WHERE id = $2 AND status = 'approved'",
+		"replay_failed", id,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to mark quarantine entry as replay_failed: %w", err)
+	}
+	return nil
+}
+
+// Deny marks a quarantine entry as denied. Accepts both 'pending' and
+// 'replay_failed' items so a reviewer can reject after a failed replay.
 func (s *Store) Deny(ctx context.Context, id, deniedBy, reason string) error {
 	res, err := s.db.ExecContext(ctx,
-		"UPDATE quarantine SET status = $1, resolved_at = $2, resolved_by = $3, reason = $4 WHERE id = $5 AND status = 'pending'",
+		"UPDATE quarantine SET status = $1, resolved_at = $2, resolved_by = $3, reason = $4 WHERE id = $5 AND status IN ('pending', 'replay_failed')",
 		"denied", time.Now(), deniedBy, reason, id,
 	)
 	if err != nil {
