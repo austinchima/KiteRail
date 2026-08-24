@@ -69,10 +69,10 @@ decision = {
 	require.NoError(t, err)
 
 	tests := []struct {
-		name          string
-		inputAgent    string
-		expectAction  string
-		expectRule    string
+		name         string
+		inputAgent   string
+		expectAction string
+		expectRule   string
 	}{
 		{
 			name:         "Allowed Agent",

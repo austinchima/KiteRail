@@ -17,11 +17,11 @@ import (
 	"github.com/austinchima/kiterail/internal/config"
 	"github.com/austinchima/kiterail/internal/dashboard"
 	"github.com/austinchima/kiterail/internal/ledger"
+	"github.com/austinchima/kiterail/internal/metrics"
 	"github.com/austinchima/kiterail/internal/opaengine"
 	"github.com/austinchima/kiterail/internal/policystore"
 	"github.com/austinchima/kiterail/internal/proxy"
 	"github.com/austinchima/kiterail/internal/quarantine"
-	"github.com/austinchima/kiterail/internal/metrics"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
@@ -52,12 +52,12 @@ func corsMiddleware(allowedOrigins []string) func(http.Handler) http.Handler {
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With")
 
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusOK)
-			return
-		}
+			if r.Method == http.MethodOptions {
+				w.WriteHeader(http.StatusOK)
+				return
+			}
 
-		next.ServeHTTP(w, r)
+			next.ServeHTTP(w, r)
 		})
 	}
 }

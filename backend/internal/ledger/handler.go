@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/austinchima/kiterail/internal/db"
 	"go.uber.org/zap"
 )
 
@@ -46,7 +47,7 @@ func (h *Handler) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 	// Make sure we return an empty array instead of null for zero entries
 	if entries == nil {
-		entries = []LedgerEntry{}
+		entries = []db.LedgerEntry{}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
