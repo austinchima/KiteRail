@@ -9,10 +9,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/austinchima/kiterail/internal/db"
 	_ "github.com/lib/pq"
 )
 
-// Schema represents the ledger table.
 const Schema = `
 CREATE TABLE IF NOT EXISTS ledger (
     seq_num SERIAL PRIMARY KEY,
@@ -27,39 +27,18 @@ CREATE TABLE IF NOT EXISTS ledger (
 );
 `
 
-// LedgerEntry represents an entry in the audit ledger.
-type LedgerEntry struct {
-	SeqNum      int
-	Timestamp   time.Time
-	Agent       string
-	Tool        string
-	Decision    string
-	PolicyRule  string
-	PayloadHash string
-	PrevHash    string
-	Hash        string
-}
-
-// LedgerStats represents aggregated stats.
-type LedgerStats struct {
-	TotalActionsToday int
-	PolicyViolations  int
-}
-
-// Store represents the ledger storage.
 type Store struct {
-	db *sql.DB
+	q db.Querier
 }
 
-// New creates a new ledger Store.
-func New(db *sql.DB) (*Store, error) {
-	if _, err := db.Exec(Schema); err != nil {
+func New(sqlDB *sql.DB) (*Store, error) {
+	if _, err := sqlDB.Exec(Schema); err != nil {
 		return nil, fmt.Errorf("failed to create ledger schema: %w", err)
 	}
-	return &Store{db: db}, nil
+	return &Store{q: db.New(sqlDB)}, nil
 }
 
-func calculateHash(entry LedgerEntry) string {
+func calculateHash(entry db.LedgerEntry) string {
 	data := fmt.Sprintf("%d%s%s%s%s%s%s",
 		entry.SeqNum,
 		entry.Timestamp.UTC().Format(time.RFC3339Nano),
@@ -73,20 +52,14 @@ func calculateHash(entry LedgerEntry) string {
 	return hex.EncodeToString(hash[:])
 }
 
-// Append appends a new entry to the ledger.
-// The transaction runs at SERIALIZABLE isolation to guarantee hash-chain ordering.
-// On serialization failure (SQLSTATE 40001), the operation retries up to 3 times
-// with brief backoff before returning an error.
-func (s *Store) Append(ctx context.Context, entry LedgerEntry) error {
+func (s *Store) Append(ctx context.Context, entry db.LedgerEntry) error {
 	const maxRetries = 3
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		err := s.appendOnce(ctx, entry)
 		if err == nil {
 			return nil
 		}
-		// Postgres serialization failure: "ERROR 40001 (serialization_failure)"
 		if isSerializationFailure(err) && attempt < maxRetries-1 {
-			// Brief backoff: 5ms, 10ms, ...
 			time.Sleep(time.Duration(5*(attempt+1)) * time.Millisecond)
 			continue
 		}
@@ -95,7 +68,6 @@ func (s *Store) Append(ctx context.Context, entry LedgerEntry) error {
 	return fmt.Errorf("ledger append failed after %d attempts", maxRetries)
 }
 
-// isSerializationFailure detects Postgres serialization failures (SQLSTATE 40001).
 func isSerializationFailure(err error) bool {
 	if err == nil {
 		return false
@@ -105,8 +77,9 @@ func isSerializationFailure(err error) bool {
 		(strings.Contains(errStr, "40001") || strings.Contains(errStr, "serialization"))
 }
 
-func (s *Store) appendOnce(ctx context.Context, entry LedgerEntry) error {
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
+func (s *Store) appendOnce(ctx context.Context, entry db.LedgerEntry) error {
+	sqlDB := s.q.DB()
+	tx, err := sqlDB.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
 	if err != nil {
 		return fmt.Errorf("failed to begin tx: %w", err)
 	}
@@ -137,9 +110,9 @@ func (s *Store) appendOnce(ctx context.Context, entry LedgerEntry) error {
 	return tx.Commit()
 }
 
-// Verify walks the chain and verifies all hashes.
 func (s *Store) Verify(ctx context.Context) (bool, error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT seq_num, timestamp, agent, tool, decision, policy_rule, payload_hash, prev_hash, hash FROM ledger ORDER BY seq_num ASC")
+	sqlDB := s.q.DB()
+	rows, err := sqlDB.QueryContext(ctx, "SELECT seq_num, timestamp, agent, tool, decision, policy_rule, payload_hash, prev_hash, hash FROM ledger ORDER BY seq_num ASC")
 	if err != nil {
 		return false, fmt.Errorf("failed to query ledger: %w", err)
 	}
@@ -147,7 +120,7 @@ func (s *Store) Verify(ctx context.Context) (bool, error) {
 
 	var prevHash string
 	for rows.Next() {
-		var entry LedgerEntry
+		var entry db.LedgerEntry
 		if err := rows.Scan(&entry.SeqNum, &entry.Timestamp, &entry.Agent, &entry.Tool, &entry.Decision, &entry.PolicyRule, &entry.PayloadHash, &entry.PrevHash, &entry.Hash); err != nil {
 			return false, fmt.Errorf("failed to scan ledger entry: %w", err)
 		}
@@ -164,43 +137,35 @@ func (s *Store) Verify(ctx context.Context) (bool, error) {
 		prevHash = entry.Hash
 	}
 
+	if err := rows.Err(); err != nil {
+		return false, fmt.Errorf("error iterating ledger rows: %w", err)
+	}
+
 	return true, nil
 }
 
-// Query queries ledger entries.
-func (s *Store) Query(ctx context.Context) ([]LedgerEntry, error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT seq_num, timestamp, agent, tool, decision, policy_rule, payload_hash, prev_hash, hash FROM ledger ORDER BY seq_num DESC LIMIT 100")
+func (s *Store) Query(ctx context.Context) ([]db.LedgerEntry, error) {
+	entries, err := s.q.ListRecentLedgerEntries(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query ledger: %w", err)
-	}
-	defer rows.Close()
-
-	var entries []LedgerEntry
-	for rows.Next() {
-		var entry LedgerEntry
-		if err := rows.Scan(&entry.SeqNum, &entry.Timestamp, &entry.Agent, &entry.Tool, &entry.Decision, &entry.PolicyRule, &entry.PayloadHash, &entry.PrevHash, &entry.Hash); err != nil {
-			return nil, fmt.Errorf("failed to scan ledger entry: %w", err)
-		}
-		entries = append(entries, entry)
 	}
 	return entries, nil
 }
 
-// Stats returns aggregated stats for today.
-func (s *Store) Stats(ctx context.Context) (LedgerStats, error) {
-	var stats LedgerStats
+func (s *Store) Stats(ctx context.Context) (db.LedgerStats, error) {
+	var stats db.LedgerStats
 
-	// Total actions today
-	err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM ledger WHERE timestamp >= CURRENT_DATE").Scan(&stats.TotalActionsToday)
+	total, err := s.q.CountTodayActions(ctx)
 	if err != nil {
 		return stats, err
 	}
+	stats.TotalActionsToday = total
 
-	// Violations today
-	err = s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM ledger WHERE timestamp >= CURRENT_DATE AND decision IN ('deny', 'quarantine')").Scan(&stats.PolicyViolations)
+	violations, err := s.q.CountTodayViolations(ctx)
 	if err != nil {
 		return stats, err
 	}
+	stats.PolicyViolations = violations
 
 	return stats, nil
 }

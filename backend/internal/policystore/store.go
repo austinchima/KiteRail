@@ -46,7 +46,7 @@ func (s *Store) List(ctx context.Context) ([]Policy, error) {
 		if entry.IsDir() {
 			continue
 		}
-		
+
 		name := entry.Name()
 		if !strings.HasSuffix(name, ".rego") && !strings.HasSuffix(name, ".rego.disabled") {
 			continue
@@ -112,14 +112,14 @@ func (s *Store) Save(ctx context.Context, id string, content string, enabled boo
 		ext = ".rego.disabled"
 	}
 	path := filepath.Join(s.policyDir, id+ext)
-	
+
 	// If it already exists with the other extension, remove it
 	otherExt := ".rego.disabled"
 	if !enabled {
 		otherExt = ".rego"
 	}
 	os.Remove(filepath.Join(s.policyDir, id+otherExt))
-	
+
 	return os.WriteFile(path, []byte(content), 0644)
 }
 
@@ -135,7 +135,7 @@ func parseMetadata(content string) (title, trigger, action string) {
 			action = strings.TrimSpace(strings.TrimPrefix(line, "# Action:"))
 		}
 	}
-	
+
 	// Fallback if not specifically tagged, just grab first comment as title
 	if title == "" {
 		for _, line := range lines {

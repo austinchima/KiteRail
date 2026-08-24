@@ -14,18 +14,17 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/austinchima/kiterail/internal/ledger"
+	"github.com/austinchima/kiterail/internal/db"
 	"github.com/austinchima/kiterail/internal/metrics"
 )
 
 // EvalInput represents the payload evaluated by the OPA engine.
 type EvalInput struct {
-	Tool       string                 `json:"tool"`
-	Arguments  map[string]interface{} `json:"arguments"`
-	Agent           string                 `json:"agent"`
-	Timestamp       time.Time              `json:"timestamp"`
-	RawMethod       string                 `json:"raw_method"`
-
+	Tool      string                 `json:"tool"`
+	Arguments map[string]interface{} `json:"arguments"`
+	Agent     string                 `json:"agent"`
+	Timestamp time.Time              `json:"timestamp"`
+	RawMethod string                 `json:"raw_method"`
 }
 
 // ProxyDecision represents the result of the policy evaluation.
@@ -55,16 +54,15 @@ type QuarantineStore interface {
 
 // LedgerStore defines the interface for appending ledger audit entries.
 type LedgerStore interface {
-	Append(ctx context.Context, entry ledger.LedgerEntry) error
+	Append(ctx context.Context, entry db.LedgerEntry) error
 }
 
 // NoOpPublisher is a null object pattern for EventPublisher.
 type NoOpPublisher struct{}
 
-func (NoOpPublisher) PublishTelemetry(ctx context.Context, event interface{}) error { return nil }
-func (NoOpPublisher) PublishAudit(ctx context.Context, event interface{}) error { return nil }
+func (NoOpPublisher) PublishTelemetry(ctx context.Context, event interface{}) error  { return nil }
+func (NoOpPublisher) PublishAudit(ctx context.Context, event interface{}) error      { return nil }
 func (NoOpPublisher) PublishQuarantine(ctx context.Context, event interface{}) error { return nil }
-
 
 // Handler is the reverse proxy HTTP handler.
 type Handler struct {
@@ -75,7 +73,7 @@ type Handler struct {
 	quarantineStore QuarantineStore
 	ledgerStore     LedgerStore
 
-	reverseProxy    *httputil.ReverseProxy
+	reverseProxy *httputil.ReverseProxy
 }
 
 // NewHandler creates a new proxy handler.
@@ -84,7 +82,7 @@ func NewHandler(logger *zap.Logger, targetURL string, engine OPAEngine, publishe
 	if err != nil {
 		return nil, err
 	}
-	
+
 	rp := httputil.NewSingleHostReverseProxy(u)
 
 	return &Handler{
@@ -95,7 +93,7 @@ func NewHandler(logger *zap.Logger, targetURL string, engine OPAEngine, publishe
 		quarantineStore: store,
 		ledgerStore:     lStore,
 
-		reverseProxy:    rp,
+		reverseProxy: rp,
 	}, nil
 }
 
@@ -106,7 +104,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Failed to read request body", http.StatusBadRequest)
 		return
 	}
-	
+
 	r.Body = io.NopCloser(bytes.NewBuffer(body))
 
 	var reqBody map[string]interface{}
@@ -118,7 +116,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	methodRaw, hasMethod := reqBody["method"]
 	paramsRaw, hasParams := reqBody["params"]
-	
+
 	if !hasMethod || !hasParams {
 		// Not JSON-RPC MCP call
 		h.reverseProxy.ServeHTTP(w, r)
@@ -130,7 +128,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.reverseProxy.ServeHTTP(w, r)
 		return
 	}
-	
+
 	var tool string
 	var arguments map[string]interface{}
 
@@ -158,19 +156,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-
 	input := EvalInput{
-		Tool:            tool,
-		Arguments:       arguments,
-		Agent:           AgentFromContext(r.Context()),
-		Timestamp:       time.Now(),
-		RawMethod:       method,
+		Tool:      tool,
+		Arguments: arguments,
+		Agent:     AgentFromContext(r.Context()),
+		Timestamp: time.Now(),
+		RawMethod: method,
 	}
 
 	start := time.Now()
 	decision, err := h.engine.Evaluate(r.Context(), input)
 	latency := time.Since(start).Seconds() * 1000
-	
+
 	if err != nil {
 		h.logger.Error("Policy evaluation failed", zap.Error(err))
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
@@ -193,7 +190,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if h.ledgerStore != nil {
-		entry := ledger.LedgerEntry{
+		entry := db.LedgerEntry{
 			Timestamp:   time.Now(),
 			Agent:       input.Agent,
 			Tool:        input.Tool,
@@ -238,7 +235,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			return
 		}
-		if err := h.publisher.PublishQuarantine(r.Context(), map[string]interface{}{
+		if err := h.publisher.PublishQuarantine(r.Context(), map[string]any{
 			"quarantine_id": id,
 			"agent":         input.Agent,
 			"tool":          input.Tool,
@@ -266,7 +263,7 @@ func AuthMiddleware(apiKeys map[string]string, logger *zap.Logger, next http.Han
 
 		auth := r.Header.Get("Authorization")
 		var token string
-		
+
 		const prefix = "Bearer "
 		if auth != "" {
 			if len(auth) < len(prefix) || auth[:len(prefix)] != prefix {
@@ -298,6 +295,7 @@ func AuthMiddleware(apiKeys map[string]string, logger *zap.Logger, next http.Han
 }
 
 type contextKey string
+
 const agentContextKey contextKey = "agent_id"
 
 // AgentFromContext extracts the agent ID from the request context.

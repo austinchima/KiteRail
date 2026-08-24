@@ -37,4 +37,7 @@ dist/
 
 # Scratch / local tooling output
 graphify-out/
-*.md.bak
+*.md.bak
+go_syntax_guide.md
+codebase.md
+skills-lock.json

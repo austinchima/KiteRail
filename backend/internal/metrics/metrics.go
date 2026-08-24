@@ -10,10 +10,10 @@ var (
 		Name: "kiterail_http_requests_total",
 		Help: "The total number of HTTP requests handled by the proxy",
 	})
-	
+
 	HttpRequestDuration = promauto.NewHistogram(prometheus.HistogramOpts{
-		Name: "kiterail_http_request_duration_seconds",
-		Help: "The duration of HTTP requests in seconds",
+		Name:    "kiterail_http_request_duration_seconds",
+		Help:    "The duration of HTTP requests in seconds",
 		Buckets: prometheus.DefBuckets,
 	})
 

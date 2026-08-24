@@ -30,10 +30,13 @@ func TestStore_Create(t *testing.T) {
 	require.NoError(t, err)
 	defer db.Close()
 
-	store := &Store{db: db}
+	mock.ExpectExec("CREATE TABLE IF NOT EXISTS quarantine").WillReturnResult(sqlmock.NewResult(1, 1))
+
+	store, err := New(db)
+	require.NoError(t, err)
 
 	mock.ExpectQuery("INSERT INTO quarantine").
-		WithArgs("agent_1", "tool_x", []byte(`{"data": "test"}`), "pending", sqlmock.AnyArg()).
+		WithArgs("agent_1", "tool_x", []byte(`{"data": "test"}`), sqlmock.AnyArg()).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("1001"))
 
 	id, err := store.Create(context.Background(), "agent_1", "tool_x", []byte(`{"data": "test"}`))
@@ -49,7 +52,10 @@ func TestStore_Get(t *testing.T) {
 	require.NoError(t, err)
 	defer db.Close()
 
-	store := &Store{db: db}
+	mock.ExpectExec("CREATE TABLE IF NOT EXISTS quarantine").WillReturnResult(sqlmock.NewResult(1, 1))
+
+	store, err := New(db)
+	require.NoError(t, err)
 	now := time.Now()
 
 	rows := sqlmock.NewRows([]string{"id", "agent_id", "tool_name", "payload", "status", "created_at", "resolved_at", "resolved_by"}).
@@ -74,7 +80,10 @@ func TestStore_List(t *testing.T) {
 	require.NoError(t, err)
 	defer db.Close()
 
-	store := &Store{db: db}
+	mock.ExpectExec("CREATE TABLE IF NOT EXISTS quarantine").WillReturnResult(sqlmock.NewResult(1, 1))
+
+	store, err := New(db)
+	require.NoError(t, err)
 	now := time.Now()
 
 	rows := sqlmock.NewRows([]string{"id", "agent_id", "tool_name", "payload", "status", "created_at", "resolved_at", "resolved_by"}).
@@ -100,7 +109,10 @@ func TestStore_Approve(t *testing.T) {
 	require.NoError(t, err)
 	defer db.Close()
 
-	store := &Store{db: db}
+	mock.ExpectExec("CREATE TABLE IF NOT EXISTS quarantine").WillReturnResult(sqlmock.NewResult(1, 1))
+
+	store, err := New(db)
+	require.NoError(t, err)
 
 	mock.ExpectExec("UPDATE quarantine SET status = \\$1, resolved_at = \\$2, resolved_by = \\$3 WHERE id = \\$4").
 		WithArgs("approved", sqlmock.AnyArg(), "admin", "1001").
@@ -118,7 +130,10 @@ func TestStore_Deny(t *testing.T) {
 	require.NoError(t, err)
 	defer db.Close()
 
-	store := &Store{db: db}
+	mock.ExpectExec("CREATE TABLE IF NOT EXISTS quarantine").WillReturnResult(sqlmock.NewResult(1, 1))
+
+	store, err := New(db)
+	require.NoError(t, err)
 
 	mock.ExpectExec("UPDATE quarantine SET status = \\$1, resolved_at = \\$2, resolved_by = \\$3, reason = \\$4 WHERE id = \\$5").
 		WithArgs("denied", sqlmock.AnyArg(), "admin", "violation", "1001").

@@ -6,18 +6,19 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/austinchima/kiterail/internal/db"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestNewStore(t *testing.T) {
-	db, mock, err := sqlmock.New()
+	sqlDB, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	defer db.Close()
+	defer sqlDB.Close()
 
 	mock.ExpectExec("CREATE TABLE IF NOT EXISTS ledger").WillReturnResult(sqlmock.NewResult(1, 1))
 
-	store, err := New(db)
+	store, err := New(sqlDB)
 	require.NoError(t, err)
 	assert.NotNil(t, store)
 
@@ -26,12 +27,16 @@ func TestNewStore(t *testing.T) {
 }
 
 func TestStore_Append(t *testing.T) {
-	db, mock, err := sqlmock.New()
+	sqlDB, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	defer db.Close()
+	defer sqlDB.Close()
 
-	store := &Store{db: db}
-	entry := LedgerEntry{
+	mock.ExpectExec("CREATE TABLE IF NOT EXISTS ledger").WillReturnResult(sqlmock.NewResult(1, 1))
+
+	store, err := New(sqlDB)
+	require.NoError(t, err)
+
+	entry := db.LedgerEntry{
 		Agent:       "agent_test",
 		Tool:        "tool_test",
 		Decision:    "allow",
@@ -40,7 +45,6 @@ func TestStore_Append(t *testing.T) {
 	}
 
 	mock.ExpectBegin()
-	// Mock previous hash query
 	mock.ExpectQuery("SELECT COALESCE").
 		WillReturnRows(sqlmock.NewRows([]string{"hash", "seq_num"}).AddRow("prev_hash_123", 42))
 
@@ -66,13 +70,16 @@ func TestStore_Append(t *testing.T) {
 }
 
 func TestStore_Verify(t *testing.T) {
-	db, mock, err := sqlmock.New()
+	sqlDB, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	defer db.Close()
+	defer sqlDB.Close()
 
-	store := &Store{db: db}
+	mock.ExpectExec("CREATE TABLE IF NOT EXISTS ledger").WillReturnResult(sqlmock.NewResult(1, 1))
 
-	entry1 := LedgerEntry{
+	store, err := New(sqlDB)
+	require.NoError(t, err)
+
+	entry1 := db.LedgerEntry{
 		SeqNum:      1,
 		Timestamp:   time.Now(),
 		Agent:       "agent_1",
@@ -83,7 +90,7 @@ func TestStore_Verify(t *testing.T) {
 	}
 	entry1.Hash = calculateHash(entry1)
 
-	entry2 := LedgerEntry{
+	entry2 := db.LedgerEntry{
 		SeqNum:      2,
 		Timestamp:   time.Now(),
 		Agent:       "agent_2",
@@ -110,13 +117,16 @@ func TestStore_Verify(t *testing.T) {
 }
 
 func TestStore_Verify_InvalidChain(t *testing.T) {
-	db, mock, err := sqlmock.New()
+	sqlDB, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	defer db.Close()
+	defer sqlDB.Close()
 
-	store := &Store{db: db}
+	mock.ExpectExec("CREATE TABLE IF NOT EXISTS ledger").WillReturnResult(sqlmock.NewResult(1, 1))
 
-	entry1 := LedgerEntry{
+	store, err := New(sqlDB)
+	require.NoError(t, err)
+
+	entry1 := db.LedgerEntry{
 		SeqNum:      1,
 		Timestamp:   time.Now(),
 		Agent:       "agent_1",
