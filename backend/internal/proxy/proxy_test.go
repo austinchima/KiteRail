@@ -8,7 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/austinchima/kiterail/internal/ledger"
+	"github.com/austinchima/kiterail/internal/db"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -28,8 +28,8 @@ func (m *MockOPAEngine) Evaluate(ctx context.Context, input EvalInput) (ProxyDec
 }
 
 type MockEventPublisher struct {
-	TelemetryEvents []interface{}
-	AuditEvents     []interface{}
+	TelemetryEvents  []interface{}
+	AuditEvents      []interface{}
 	QuarantineEvents []interface{}
 }
 
@@ -68,11 +68,11 @@ func (m *MockQuarantineStore) Create(ctx context.Context, agentID, toolName stri
 }
 
 type MockLedgerStore struct {
-	Entries []ledger.LedgerEntry
+	Entries []db.LedgerEntry
 	Err     error
 }
 
-func (m *MockLedgerStore) Append(ctx context.Context, entry ledger.LedgerEntry) error {
+func (m *MockLedgerStore) Append(ctx context.Context, entry db.LedgerEntry) error {
 	m.Entries = append(m.Entries, entry)
 	return m.Err
 }
@@ -81,8 +81,7 @@ func (m *MockLedgerStore) Append(ctx context.Context, entry ledger.LedgerEntry) 
 
 func TestServeHTTP_Allow(t *testing.T) {
 	logger := zap.NewNop()
-	
-	// Set up backend target
+
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(`{"result": "ok"}`))
@@ -118,23 +117,22 @@ func TestServeHTTP_Allow(t *testing.T) {
 
 	handler.ServeHTTP(rr, req)
 
-	// Asserts
 	assert.Equal(t, http.StatusOK, rr.Code)
-	
+
 	assert.Equal(t, "example_tool", engine.Input.Tool)
 	assert.Equal(t, "agent_1", engine.Input.Agent)
-	
+
 	assert.Len(t, publisher.TelemetryEvents, 1)
 	assert.Len(t, publisher.AuditEvents, 1)
 	assert.Len(t, publisher.QuarantineEvents, 0)
-	
+
 	assert.Len(t, lStore.Entries, 1)
 	assert.Equal(t, "allow", lStore.Entries[0].Decision)
 }
 
 func TestServeHTTP_Deny(t *testing.T) {
 	logger := zap.NewNop()
-	
+
 	engine := &MockOPAEngine{
 		Decision: ProxyDecision{Action: "deny", Rule: "deny_all", Explanation: "forbidden"},
 	}
@@ -157,23 +155,22 @@ func TestServeHTTP_Deny(t *testing.T) {
 
 	handler.ServeHTTP(rr, req)
 
-	// Asserts
 	assert.Equal(t, http.StatusForbidden, rr.Code)
-	
+
 	var resp map[string]interface{}
 	err = json.Unmarshal(rr.Body.Bytes(), &resp)
 	require.NoError(t, err)
 	assert.Equal(t, "forbidden", resp["explanation"])
-	
+
 	assert.Len(t, publisher.TelemetryEvents, 1)
-	assert.Len(t, publisher.AuditEvents, 1) 
+	assert.Len(t, publisher.AuditEvents, 1)
 	assert.Len(t, lStore.Entries, 1)
 	assert.Equal(t, "deny", lStore.Entries[0].Decision)
 }
 
 func TestServeHTTP_Quarantine(t *testing.T) {
 	logger := zap.NewNop()
-	
+
 	engine := &MockOPAEngine{
 		Decision: ProxyDecision{Action: "quarantine", Rule: "quarantine_rule"},
 	}
@@ -196,20 +193,19 @@ func TestServeHTTP_Quarantine(t *testing.T) {
 
 	handler.ServeHTTP(rr, req)
 
-	// Asserts
 	assert.Equal(t, http.StatusAccepted, rr.Code)
-	
+
 	var resp map[string]interface{}
 	err = json.Unmarshal(rr.Body.Bytes(), &resp)
 	require.NoError(t, err)
 	assert.Equal(t, "quarantined", resp["status"])
-	
+
 	assert.Len(t, publisher.TelemetryEvents, 1)
 	assert.Len(t, publisher.QuarantineEvents, 1)
-	
+
 	assert.Len(t, lStore.Entries, 1)
 	assert.Equal(t, "quarantine", lStore.Entries[0].Decision)
-	
+
 	assert.Len(t, qStore.CreatedItems, 1)
 	assert.Equal(t, "agent_3", qStore.CreatedItems[0].AgentID)
 	assert.Equal(t, "suspicious_tool", qStore.CreatedItems[0].Tool)

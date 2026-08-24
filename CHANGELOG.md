@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **sqlc migration**: Replaced manual SQL + `Scan()` in `internal/ledger` and `internal/quarantine` with sqlc-generated type-safe querier (`internal/db`). All queries now compile-time verified; zero reflection at runtime.
+- **Generated querier** (`internal/db/querier.go`): `LedgerEntry`, `QuarantineEntry`, `LedgerStats` types + `Querier` interface with full CRUD + `DB() *sql.DB` for transaction access.
+- **sqlc config** (`backend/sqlc.yaml`) + query files (`sql/ledger.sql`, `sql/quarantine.sql`, `sql/schema.sql`) with annotations for all CRUD operations.
+- **Hash-chain ledger** and **quarantine stores** refactored to use generated querier; custom logic (hash-chain, SERIALIZABLE retries) kept on top.
+- **Full test coverage**: `internal/ledger/ledger_test.go` and `internal/quarantine/store_test.go` migrated to sqlc types; all tests pass with `go test -race ./...`.
+- **All dependent code updated**: `internal/proxy/proxy.go`, `internal/quarantine/handler.go`, `internal/ledger/handler.go`, `internal/dashboard/handler.go`, `internal/proxy/proxy_test.go`, `internal/quarantine/handler_test.go` — all use `db.LedgerEntry`, `db.QuarantineEntry`, `db.LedgerStats`.
+
+### Changed
+- Replaced manual `database/sql` + `Scan()` with sqlc-generated type-safe methods in `internal/ledger` and `internal/quarantine`.
+- Stores now wrap `db.Querier` interface; `DB() *sql.DB` method exposed for SERIALIZABLE transactions.
+- Removed manual `Scan()` loops and raw SQL from store code — generated methods handle type-safe row mapping.
+- Test files updated: variable renamed from `db` to `sqlDB` to avoid shadowing `db` package; mocks updated for schema expectations.
 - `POST /api/v1/policies/simulate` endpoint for dry-running policy evaluations without triggering audit or ledger side effects.
 - `KITERAIL_ALLOWED_ORIGINS` configuration variable for CORS support.
 - **Quarantine replay on approval**: `POST /api/v1/quarantine/:id/approve` now replays the original stored payload verbatim to `KITERAIL_TARGET_URL` after marking the item approved. The replay sets `X-KiteRail-Agent`, `X-KiteRail-Quarantine-ID`, and `X-KiteRail-Approved-By` headers on the upstream request so the target has full HITL context. A `502 Bad Gateway` is returned if the upstream call fails.

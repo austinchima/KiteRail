@@ -13,6 +13,7 @@ import (
 
 	"go.uber.org/zap"
 
+	"github.com/austinchima/kiterail/internal/db"
 	"github.com/austinchima/kiterail/internal/ledger"
 )
 
@@ -22,7 +23,6 @@ const defaultMaxReplayAttempts = 3
 // defaultReplayBackoff is the production wait between retry attempts.
 // Two entries cover the gap between attempt-0→1 and attempt-1→2.
 var defaultReplayBackoff = []time.Duration{time.Second, 3 * time.Second}
-
 
 // Handler exposes REST endpoints for the quarantine queue.
 type Handler struct {
@@ -139,12 +139,11 @@ func (h *Handler) approveEntry(w http.ResponseWriter, r *http.Request, id string
 	go h.replayWithRetry(context.Background(), id, entryCopy, approvedBy)
 }
 
-
 // replayWithRetry attempts to replay the approved payload up to maxReplayAttempts
 // times with exponential backoff between attempts. It is intended to be called
 // in a goroutine — it blocks until the replay succeeds or all attempts are
 // exhausted, then marks the item as replay_failed if needed.
-func (h *Handler) replayWithRetry(ctx context.Context, id string, entry QuarantineEntry, approvedBy string) {
+func (h *Handler) replayWithRetry(ctx context.Context, id string, entry db.QuarantineEntry, approvedBy string) {
 	for attempt := 0; attempt < h.maxReplayAttempts; attempt++ {
 		if attempt > 0 {
 			delay := h.replayBackoff[attempt-1]
@@ -180,7 +179,7 @@ func (h *Handler) replayWithRetry(ctx context.Context, id string, entry Quaranti
 // doReplay performs a single replay attempt — POSTs the stored payload to the
 // target and records a ledger entry. It does NOT handle retries or status
 // transitions; those are managed by replayWithRetry.
-func (h *Handler) doReplay(ctx context.Context, id string, entry QuarantineEntry, approvedBy string) error {
+func (h *Handler) doReplay(ctx context.Context, id string, entry db.QuarantineEntry, approvedBy string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, h.targetURL, bytes.NewReader(entry.Payload))
 	if err != nil {
 		return fmt.Errorf("failed to build replay request: %w", err)
@@ -221,11 +220,11 @@ func (h *Handler) markReplayFailed(ctx context.Context, id string) {
 
 // recordReplayLedger appends a HITL approval + replay outcome entry to the
 // tamper-evident ledger. Errors are logged but do not propagate.
-func (h *Handler) recordReplayLedger(ctx context.Context, id string, entry QuarantineEntry, approvedBy, decision string) {
+func (h *Handler) recordReplayLedger(ctx context.Context, id string, entry db.QuarantineEntry, approvedBy, decision string) {
 	if h.lStore == nil {
 		return
 	}
-	if err := h.lStore.Append(ctx, ledger.LedgerEntry{
+	if err := h.lStore.Append(ctx, db.LedgerEntry{
 		Agent:       approvedBy,
 		Tool:        entry.ToolName,
 		Decision:    decision,
@@ -235,7 +234,6 @@ func (h *Handler) recordReplayLedger(ctx context.Context, id string, entry Quara
 		h.logger.Error("failed to write replay ledger entry", zap.String("id", id), zap.Error(err))
 	}
 }
-
 
 func (h *Handler) denyEntry(w http.ResponseWriter, r *http.Request, id string) {
 	var body struct {
@@ -259,7 +257,7 @@ func (h *Handler) denyEntry(w http.ResponseWriter, r *http.Request, id string) {
 
 	// Record HITL denial in tamper-evident ledger.
 	if h.lStore != nil {
-		_ = h.lStore.Append(r.Context(), ledger.LedgerEntry{
+		_ = h.lStore.Append(r.Context(), db.LedgerEntry{
 			Agent:       body.DeniedBy,
 			Tool:        "quarantine.deny",
 			Decision:    "denied",

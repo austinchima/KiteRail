@@ -50,7 +50,7 @@ func TestPublisher_And_Subscriber(t *testing.T) {
 
 	sub, err := NewSubscriber(context.Background(), clientURL)
 	require.NoError(t, err)
-	
+
 	// Create a channel and subscribe to the internal broadcaster
 	ch := sub.Subscribe()
 	defer sub.Unsubscribe(ch)
@@ -58,7 +58,7 @@ func TestPublisher_And_Subscriber(t *testing.T) {
 	// Start subscriber loop in background
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	
+
 	go func() {
 		err := sub.Start(ctx)
 		if err != nil && err != context.Canceled {

@@ -21,7 +21,7 @@ type TelemetryEvent struct {
 type Subscriber struct {
 	nc *nats.Conn
 	js jetstream.JetStream
-	
+
 	mu       sync.Mutex
 	channels map[chan TelemetryEvent]struct{}
 }
@@ -43,7 +43,7 @@ func NewSubscriber(ctx context.Context, url string) (*Subscriber, error) {
 		js:       js,
 		channels: make(map[chan TelemetryEvent]struct{}),
 	}
-	
+
 	return sub, nil
 }
 
@@ -73,7 +73,7 @@ func (s *Subscriber) Start(ctx context.Context) error {
 		<-ctx.Done()
 		cc.Stop()
 	}()
-	
+
 	return nil
 }
 
