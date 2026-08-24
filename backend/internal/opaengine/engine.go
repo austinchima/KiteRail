@@ -7,8 +7,8 @@ import (
 
 	"sync"
 
-	"github.com/open-policy-agent/opa/v1/rego"
 	"github.com/austinchima/kiterail/internal/proxy"
+	"github.com/open-policy-agent/opa/v1/rego"
 )
 
 // Engine represents the OPA policy evaluation engine.
@@ -60,11 +60,11 @@ func (e *Engine) Reload(ctx context.Context) error {
 // Evaluate evaluates the input against the loaded policies.
 func (e *Engine) Evaluate(ctx context.Context, input proxy.EvalInput) (proxy.ProxyDecision, error) {
 	inputMap := map[string]interface{}{
-		"tool":             input.Tool,
-		"arguments":        input.Arguments,
-		"agent":            input.Agent,
-		"timestamp":        input.Timestamp,
-		"raw_method":       input.RawMethod,
+		"tool":       input.Tool,
+		"arguments":  input.Arguments,
+		"agent":      input.Agent,
+		"timestamp":  input.Timestamp,
+		"raw_method": input.RawMethod,
 	}
 
 	e.mu.RLock()
@@ -77,7 +77,7 @@ func (e *Engine) Evaluate(ctx context.Context, input proxy.EvalInput) (proxy.Pro
 	}
 
 	decision := proxy.ProxyDecision{
-		Action: "deny", // default fail-closed
+		Action:      "deny", // default fail-closed
 		Explanation: "No matching policy found (fallback)",
 	}
 
