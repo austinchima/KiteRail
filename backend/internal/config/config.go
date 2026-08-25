@@ -32,16 +32,16 @@ type Config struct {
 	Environment string `yaml:"environment"`
 
 	// HTTP server timeouts.
-	ReadTimeout       time.Duration `yaml:"read_timeout"`
-	WriteTimeout      time.Duration `yaml:"write_timeout"`
-	IdleTimeout       time.Duration `yaml:"idle_timeout"`
-	MaxHeaderBytes    int           `yaml:"max_header_bytes"`
-	MaxRequestBodyBytes int64       `yaml:"max_request_body_bytes"`
+	ReadTimeout         time.Duration `yaml:"read_timeout"`
+	WriteTimeout        time.Duration `yaml:"write_timeout"`
+	IdleTimeout         time.Duration `yaml:"idle_timeout"`
+	MaxHeaderBytes      int           `yaml:"max_header_bytes"`
+	MaxRequestBodyBytes int64         `yaml:"max_request_body_bytes"`
 
 	// Postgres connection pool.
-	PGMaxOpenConns     int           `yaml:"pg_max_open_conns"`
-	PGMaxIdleConns     int           `yaml:"pg_max_idle_conns"`
-	PGConnMaxLifetime  time.Duration `yaml:"pg_conn_max_lifetime"`
+	PGMaxOpenConns    int           `yaml:"pg_max_open_conns"`
+	PGMaxIdleConns    int           `yaml:"pg_max_idle_conns"`
+	PGConnMaxLifetime time.Duration `yaml:"pg_conn_max_lifetime"`
 
 	// Per-agent rate limiting (requests/second, token bucket).
 	RateLimitRPS   float64 `yaml:"rate_limit_rps"`
