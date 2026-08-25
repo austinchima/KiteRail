@@ -4,8 +4,9 @@ import (
 	"context"
 	"fmt"
 	"os"
-
 	"sync"
+
+	"go.uber.org/zap"
 
 	"github.com/austinchima/kiterail/internal/proxy"
 	"github.com/open-policy-agent/opa/v1/rego"
@@ -15,12 +16,13 @@ import (
 type Engine struct {
 	policyDir string
 	query     rego.PreparedEvalQuery
+	logger    *zap.Logger
 	mu        sync.RWMutex
 }
 
 // New creates a new Engine and loads policies from the specified directory.
-func New(ctx context.Context, policyDir string) (*Engine, error) {
-	e := &Engine{policyDir: policyDir}
+func New(ctx context.Context, policyDir string, logger *zap.Logger) (*Engine, error) {
+	e := &Engine{policyDir: policyDir, logger: logger}
 	if err := e.Reload(ctx); err != nil {
 		return nil, err
 	}
@@ -58,6 +60,7 @@ func (e *Engine) Reload(ctx context.Context) error {
 }
 
 // Evaluate evaluates the input against the loaded policies.
+// Fails closed on evaluation errors (returns deny with policy_eval_error rule).
 func (e *Engine) Evaluate(ctx context.Context, input proxy.EvalInput) (proxy.ProxyDecision, error) {
 	inputMap := map[string]interface{}{
 		"tool":       input.Tool,
@@ -73,7 +76,13 @@ func (e *Engine) Evaluate(ctx context.Context, input proxy.EvalInput) (proxy.Pro
 
 	rs, err := query.Eval(ctx, rego.EvalInput(inputMap))
 	if err != nil {
-		return proxy.ProxyDecision{}, fmt.Errorf("evaluation failed: %w", err)
+		// Fail closed: log the error and return a deny decision
+		e.logger.Error("policy evaluation failed — failing closed", zap.Error(err))
+		return proxy.ProxyDecision{
+			Action:      "deny",
+			Rule:        "policy_eval_error",
+			Explanation: "Policy evaluation failed — failing closed",
+		}, nil
 	}
 
 	decision := proxy.ProxyDecision{

@@ -10,7 +10,8 @@ services:
       KITERAIL_POSTGRES_DSN: "postgres://kiterail:kiterail@postgres:5432/kiterail?sslmode=disable"
       KITERAIL_POLICY_DIR: "/app/policies"
       KITERAIL_LOG_LEVEL: "info"
-      KITERAIL_API_KEYS: "sk_dev_123:agent_1"
+      KITERAIL_API_KEYS: "sk_agent_local_000000000000:agent_1"
+      KITERAIL_REVIEWER_API_KEYS: "sk_reviewer_local_00000000:reviewer_1"
       KITERAIL_TARGET_URL: "http://echo-target:8081"
     depends_on:
       postgres:

@@ -16,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Hash-chain ledger** and **quarantine stores** refactored to use generated querier; custom logic (hash-chain, SERIALIZABLE retries) kept on top.
 - **Full test coverage**: `internal/ledger/ledger_test.go` and `internal/quarantine/store_test.go` migrated to sqlc types; all tests pass with `go test -race ./...`.
 - **All dependent code updated**: `internal/proxy/proxy.go`, `internal/quarantine/handler.go`, `internal/ledger/handler.go`, `internal/dashboard/handler.go`, `internal/proxy/proxy_test.go`, `internal/quarantine/handler_test.go` — all use `db.LedgerEntry`, `db.QuarantineEntry`, `db.LedgerStats`.
+- `policies/main.rego` — Decision aggregator with severity-based selection (deny=3, quarantine=2, allow=1).
+- `tests/policies/authz_test.rego` — Unit tests for the aggregator logic (small refund allowed, large refund quarantined, deny beats quarantine, unknown tool defaults to deny).
+- GitHub Actions policy job (`.github/workflows/ci.yml`) — runs `opa check --strict`, `opa test`, and smoke-evals the quickstart payload.
+- `docs/policy-cookbook/` — Policy pattern library (Threshold, Time Window, Jurisdiction, Allow List) demonstrating the new authoring pattern.
+- Ledger request-ID round-trip integration test (`TestLedger_RequestID_SurvivesRoundTrip`) asserting persistence across raw row read, `GetLedgerEntry`, `ListLedgerEntriesAsc`, `ListRecentLedgerEntries`, and `Verify()`.
 
 ### Changed
 - Replaced manual `database/sql` + `Scan()` with sqlc-generated type-safe methods in `internal/ledger` and `internal/quarantine`.
@@ -28,23 +33,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `ErrAlreadyResolved` sentinel error in `internal/quarantine` — returned when attempting to approve or deny an item that has already been resolved.
 - `ErrNotFound` sentinel error in `internal/quarantine` for missing quarantine items.
 - Handler tests for the four approval replay paths: success, 409 conflict, 404 not found, and 502 target error (`internal/quarantine/handler_test.go`).
-
-### Changed
 - Refactored `internal/policy` to `internal/policystore` and `internal/opa` to `internal/opaengine` for better package boundary clarity.
 - `KITERAIL_TARGET_URL` is now strictly required with no default value. Server fails fast if unset.
 - Updated README with a "Why KiteRail vs X" table and refined positioning.
 - `quarantine.NewHandler` now accepts `targetURL string` to enable direct HTTP replay on approval. `main.go` passes `cfg.TargetURL`.
 - `quarantine.Store.Approve()` and `quarantine.Store.Deny()` now use `WHERE status = 'pending'` and check `RowsAffected` — concurrent resolution attempts are conflict-safe, with exactly one caller succeeding and all others receiving `ErrAlreadyResolved` (HTTP `409 Conflict`).
+- **Policy authoring pattern**: Policies must now contribute to the `decisions` set using `decisions contains {...} if {...}` instead of defining the complete `decision` rule. Old-style policies will conflict with the aggregator and fail closed (returning `policy_eval_error` with action `deny`).
+- **Default deny moved to aggregator**: The default-deny behavior moved from `policies/default_deny.rego` (deleted) into `policies/main.rego`.
+- **Example policies relocated**: `policies/examples/` moved to `docs/policy-cookbook/` and converted to the new `decisions contains` pattern.
+- **Engine fail-closed behavior**: `internal/opaengine/engine.go` now fails closed on evaluation errors — returns `deny` with `rule: "policy_eval_error"` and logs the error internally instead of propagating a 500. Engine constructor now requires a `*zap.Logger`.
+- **Ledger hash algorithm changed (BREAKING)**: The `calculateHash()` function now uses a different algorithm (fixed-width timestamp format, pipe separators, includes `PolicyRule`). Existing ledger entries hashed with the old algorithm will fail `Verify()`. Dev/test ledgers must be wiped (`TRUNCATE ledger`) or re-hashed. Production users must run `backend/sql/migrations/001_timestamptz.sql` to convert `TIMESTAMP` columns to `TIMESTAMPTZ` for timezone-safe storage.
+- **sqlc output regenerated (v1.31.1) and now canonical**: all ledger & quarantine SQL lives in `sql/*.sql`, including the replay state machine (`ClaimApprovedForReplay`, `MarkReplayed`, `ReturnToApproved`, `RecoverStuckReplays`) that was previously hand-written in Go; generated package renamed to `db` to match its import path; app-facing type names preserved via a thin compatibility layer (`internal/db/compat.go`).
+- Quarantine queries use native UUID equality again (primary-key index preserved); string IDs remain the HTTP/store boundary contract and are converted once inside the store.
 
 ### Fixed
-- **Data race in quarantine replay config** (`internal/quarantine`): `maxReplayAttempts` and `replayBackoff` were package-level mutable variables. A goroutine spawned by `TestApprove_Returns200Immediately` held a reference to them while subsequent tests wrote to them concurrently, causing the race detector to fail CI. Both variables are now instance fields on `Handler`, initialised in `NewHandler` to production defaults. Tests create per-handler instances with zero-delay backoff instead of mutating shared globals. `go test -race` passes cleanly on both `feature/quarantine-replay-failure-handling` and `main`.
-- **Goroutine leak in `TestApprove_Returns200Immediately`**: The test previously returned before its background replay goroutine finished (the goroutine was gated on a slow test-server). It now calls `close(ready)` then `<-done` to drain the goroutine before the test exits, preventing it from racing against writes in later tests.
-- **Quarantine approve did not replay**: Approving a quarantined request marked it in the ledger but never forwarded the payload to the target API. The approving human reviewer had no way to complete the intended action. Now fully implemented end-to-end.
-- **Double-approve vulnerability**: Concurrent `approve` calls on the same quarantine item could previously both succeed, potentially triggering duplicate actions on the target. Now safe.
-
-### Changed
-- Added inline comments to `corsMiddleware` in `cmd/server/main.go` clarifying the origin-check and header-set logic.
-- Reformatted `examples/test_payload.json` to pretty-printed JSON for readability.
+- **Policy evaluation conflict bug**: Multiple policies defining the complete `decision` rule in the same package caused OPA `eval_conflict_error` (e.g., `refund_limit.rego` at $1,000 and `threshold.rego` at $500 for `stripe.charge.refund`). Fixed by introducing a decision aggregator in `policies/main.rego` that collects `decisions` set contributions and selects the most restrictive action (deny > quarantine > allow) with deterministic tie-breaking.
+- **Time window policy bug**: `time_window.rego` declared unused variables `ns` and `date`; fixed to use only `weekday := time.weekday(time.now_ns())`.
+- **Bug A — Ledger hash chain false positive on Verify()**: `calculateHash()` used `time.RFC3339Nano` which produces variable-width output and includes nanoseconds. Postgres `TIMESTAMP` stores only microseconds, so timestamps read back during `Verify()` were truncated, causing recomputed hashes to differ from stored hashes. Fixed by introducing `normalizeTimestamp()` (truncates to microseconds UTC) and using fixed-width format `2006-01-02T15:04:05.000000Z07:00` in `calculateHash()`. Added `TestCalculateHash_StableAfterMicrosecondTruncation` unit test and real-Postgres integration test `TestLedger_RoundtripWithVerify` that would fail on the old code.
+- **Bug B — PolicyRule excluded from hash and ambiguous field concatenation**: The `policy_rule` column was not included in the hash, so it could be tampered with undetectably. Adjacent fields were concatenated without separators (e.g., `agent="a",tool="bc"` identical to `agent="ab",tool="c"`). Fixed by adding `PolicyRule` to the hash input and using pipe (`|`) separators between all fields. Added `TestCalculateHash_CoversPolicyRule` unit test.
+- **Bug C — Serialization failure retry dead code**: `isSerializationFailure()` checked for prefix `"pq: E"` which never matches lib/pq's actual error format (`"pq: could not serialize..."`). The documented "retry x3 on SQLSTATE 40001" never fired. Fixed by using `errors.As(err, &pqErr)` with `pqErr.Code == "40001"`. Moved lib/pq from blank import to named import.
+- **SECURITY: Proxy credential leak** — The reverse proxy forwarded the agent's KiteRail bearer token (`Authorization` header) to the downstream target on all allow and passthrough paths. The `Authorization` header is now stripped in the reverse-proxy `Director` before any request leaves the proxy. Added `TestServeHTTP_Allow_StripsAuthorizationHeader` and `TestServeHTTP_NonJSONPassthrough_StripsAuthorizationHeader` to verify the fix.
+- **request_id was never persisted**: `appendOnce()` INSERT omitted `request_id` while `calculateHash()` hashed it, so every entry with a non-empty request ID failed `Verify()`. It is now written via generated `InsertLedgerEntry` bound to the same SERIALIZABLE transaction through `WithTx`.
+- **Serialization retry storms**: fixed-width 5/10 ms backoff let concurrent appends exhaust 3 attempts under contention; retries are now exponential with jitter (bounded <2 s worst case) and context-cancellable.
+- Integration test helpers now apply schema migrations — suites previously failed against any fresh database.
+- CI now fails when checked-in `internal/db` code is stale relative to canonical SQL (`sqlc generate && git diff --exit-code -- internal/db`).
 
 ## [1.1.0-alpha] - 2026-08-01
 

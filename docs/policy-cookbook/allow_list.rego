@@ -12,6 +12,6 @@ allowed_tools := {
 	"linear.ticket.update"
 }
 
-decision := {"action": "allow", "rule": "allowed_tool", "explanation": "Tool is on the approved allow-list"} if {
+decisions contains {"action": "allow", "rule": "allowed_tool", "explanation": "Tool is on the approved allow-list"} if {
 	input.tool in allowed_tools
 }
