@@ -17,7 +17,6 @@ func TestNewStore(t *testing.T) {
 	require.NoError(t, err)
 	defer sqlDB.Close()
 
-
 	store, err := New(sqlDB)
 	require.NoError(t, err)
 	assert.NotNil(t, store)
@@ -30,7 +29,6 @@ func TestStore_Append(t *testing.T) {
 	sqlDB, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer sqlDB.Close()
-
 
 	store, err := New(sqlDB)
 	require.NoError(t, err)
@@ -98,7 +96,6 @@ func TestStore_Verify(t *testing.T) {
 	require.NoError(t, err)
 	defer sqlDB.Close()
 
-
 	store, err := New(sqlDB)
 	require.NoError(t, err)
 
@@ -145,7 +142,6 @@ func TestStore_Verify_InvalidChain(t *testing.T) {
 	sqlDB, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer sqlDB.Close()
-
 
 	store, err := New(sqlDB)
 	require.NoError(t, err)

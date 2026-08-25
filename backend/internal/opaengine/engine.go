@@ -8,7 +8,7 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/austinchima/kiterail/internal/proxy"
+	"github.com/austinchima/kiterail/internal/types"
 	"github.com/open-policy-agent/opa/v1/rego"
 )
 
@@ -61,7 +61,7 @@ func (e *Engine) Reload(ctx context.Context) error {
 
 // Evaluate evaluates the input against the loaded policies.
 // Fails closed on evaluation errors (returns deny with policy_eval_error rule).
-func (e *Engine) Evaluate(ctx context.Context, input proxy.EvalInput) (proxy.ProxyDecision, error) {
+func (e *Engine) Evaluate(ctx context.Context, input types.EvalInput) (types.ProxyDecision, error) {
 	inputMap := map[string]interface{}{
 		"tool":       input.Tool,
 		"arguments":  input.Arguments,
@@ -78,14 +78,14 @@ func (e *Engine) Evaluate(ctx context.Context, input proxy.EvalInput) (proxy.Pro
 	if err != nil {
 		// Fail closed: log the error and return a deny decision
 		e.logger.Error("policy evaluation failed — failing closed", zap.Error(err))
-		return proxy.ProxyDecision{
+		return types.ProxyDecision{
 			Action:      "deny",
 			Rule:        "policy_eval_error",
 			Explanation: "Policy evaluation failed — failing closed",
 		}, nil
 	}
 
-	decision := proxy.ProxyDecision{
+	decision := types.ProxyDecision{
 		Action:      "deny", // default fail-closed
 		Explanation: "No matching policy found (fallback)",
 	}

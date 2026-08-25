@@ -9,7 +9,7 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/austinchima/kiterail/internal/proxy"
+	"github.com/austinchima/kiterail/internal/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -20,7 +20,7 @@ func TestEngine_NoPolicies(t *testing.T) {
 	engine, err := New(ctx, "nonexistent-dir", logger)
 	require.NoError(t, err)
 
-	input := proxy.EvalInput{
+	input := types.EvalInput{
 		Tool:      "test_tool",
 		Agent:     "agent_1",
 		Timestamp: time.Now(),
@@ -101,7 +101,7 @@ decisions contains {"action": "quarantine", "rule": "quarantine_agent_2", "expla
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			input := proxy.EvalInput{
+			input := types.EvalInput{
 				Tool:      "test_tool",
 				Agent:     tc.inputAgent,
 				Timestamp: time.Now(),
@@ -128,13 +128,13 @@ func TestEngine_RepositoryPolicies(t *testing.T) {
 
 	tests := []struct {
 		name         string
-		input        proxy.EvalInput
+		input        types.EvalInput
 		expectAction string
 		expectRule   string
 	}{
 		{
 			name: "Small refund allowed",
-			input: proxy.EvalInput{
+			input: types.EvalInput{
 				Tool:      "stripe.charge.refund",
 				Arguments: map[string]interface{}{"amount": 100},
 				Agent:     "agent_1",
@@ -145,7 +145,7 @@ func TestEngine_RepositoryPolicies(t *testing.T) {
 		},
 		{
 			name: "Large refund quarantined",
-			input: proxy.EvalInput{
+			input: types.EvalInput{
 				Tool:      "stripe.charge.refund",
 				Arguments: map[string]interface{}{"amount": 1500},
 				Agent:     "agent_1",
@@ -156,7 +156,7 @@ func TestEngine_RepositoryPolicies(t *testing.T) {
 		},
 		{
 			name: "Deny outranks quarantine",
-			input: proxy.EvalInput{
+			input: types.EvalInput{
 				Tool: "swift.wire.initiate",
 				Arguments: map[string]interface{}{
 					"amount":       50000,
@@ -170,7 +170,7 @@ func TestEngine_RepositoryPolicies(t *testing.T) {
 		},
 		{
 			name: "Unknown tool default denied",
-			input: proxy.EvalInput{
+			input: types.EvalInput{
 				Tool:      "unknown.tool",
 				Arguments: map[string]interface{}{},
 				Agent:     "agent_1",
