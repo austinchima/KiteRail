@@ -334,7 +334,7 @@
       "id": "dashboard-to-ingress",
       "from": "dashboard",
       "to": "ingress",
-      "label": "reviewer/admin REST request",
+      "label": "reviewer/admin REST · inbox + ledger views",
       "fromSide": "right",
       "toSide": "right",
       "via": [
@@ -503,7 +503,7 @@
       "id": "human-api-to-quarantine",
       "from": "human-api",
       "to": "quarantine",
-      "label": "list + approve / deny",
+      "label": "reads inbox · approve / deny",
       "fromSide": "left",
       "toSide": "bottom",
       "via": [
