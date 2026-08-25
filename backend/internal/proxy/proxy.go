@@ -18,24 +18,14 @@ import (
 	"github.com/austinchima/kiterail/internal/auth"
 	"github.com/austinchima/kiterail/internal/db"
 	"github.com/austinchima/kiterail/internal/metrics"
+	"github.com/austinchima/kiterail/internal/types"
 )
 
-// EvalInput represents the payload evaluated by the OPA engine.
-type EvalInput struct {
-	Tool      string                 `json:"tool"`
-	Arguments map[string]interface{} `json:"arguments"`
-	Agent     string                 `json:"agent"`
-	Timestamp time.Time              `json:"timestamp"`
-	RawMethod string                 `json:"raw_method"`
-}
+// EvalInput is an alias for types.EvalInput, kept here for backwards compatibility.
+type EvalInput = types.EvalInput
 
-// ProxyDecision represents the result of the policy evaluation.
-type ProxyDecision struct {
-	Action      string  `json:"action"` // allow, deny, quarantine
-	Rule        string  `json:"rule"`
-	LatencyMs   float64 `json:"latency_ms"`
-	Explanation string  `json:"explanation"`
-}
+// ProxyDecision is an alias for types.ProxyDecision, kept here for backwards compatibility.
+type ProxyDecision = types.ProxyDecision
 
 // OPAEngine defines the interface for policy evaluation.
 type OPAEngine interface {
@@ -144,7 +134,7 @@ func ingressError(w http.ResponseWriter, status int, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(map[string]string{
-		"error":      "invalid_request",
+		"error":       "invalid_request",
 		"explanation": msg,
 	})
 }
