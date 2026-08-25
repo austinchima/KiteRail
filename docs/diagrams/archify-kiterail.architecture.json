@@ -7,7 +7,7 @@
     "quality_profile": "showcase",
     "repository": {
       "url": "https://github.com/austinchima/KiteRail.git",
-      "revision": "f78fb45abb805aa87266e43dc21e64719e6d7210"
+      "revision": "b4bd0a2188e99286397ccf6ac5d73b9391490ae5"
     }
   },
   "components": [
@@ -149,13 +149,23 @@
       "size": [
         210,
         92
+      ],
+      "sources": [
+        {
+          "path": "backend/internal/quarantine/worker.go",
+          "label": "Replay loop"
+        },
+        {
+          "path": "backend/sql/quarantine.sql",
+          "label": "Atomic FIFO claims"
+        }
       ]
     },
     {
       "id": "ledger",
       "type": "database",
       "label": "Audit Ledger",
-      "sublabel": "hash-chain · serial retry ×3",
+      "sublabel": "hash-chain · serializable retry ×8",
       "pos": [
         580,
         430
@@ -555,10 +565,34 @@
       "label": "review interaction"
     },
     {
+      "id": "worker-to-ledger",
       "from": "worker",
       "to": "ledger",
-      "label": "append replay outcome - audited",
-      "direction": "one-way"
+      "label": "append replay outcome · audited",
+      "fromSide": "right",
+      "toSide": "left",
+      "labelAt": [
+        940,
+        590
+      ],
+      "via": [
+        [
+          1352,
+          476
+        ],
+        [
+          1352,
+          572
+        ],
+        [
+          540,
+          572
+        ],
+        [
+          540,
+          475
+        ]
+      ]
     }
   ]
 }
