@@ -5034,7 +5034,7 @@
 
         <!-- Connection paths (before components for correct z-order) -->
         <path data-edge-from="agent" data-edge-to="ingress" data-edge-label="JSON-RPC / MCP" data-edge-key="0" data-edge-id="agent-to-ingress" data-composition-points="190,292;300,292" d="M 190 292 L 300 292" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path data-edge-from="dashboard" data-edge-to="ingress" data-edge-label="reviewer/admin REST request" data-edge-key="1" data-edge-id="dashboard-to-ingress" data-composition-points="520,640;550,640;550,292;485,292" d="M 520 640 L 542 640 Q 550 640 550 632 L 550 300 Q 550 292 542 292 L 485 292" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="dashboard" data-edge-to="ingress" data-edge-label="reviewer/admin REST · inbox + ledger views" data-edge-key="1" data-edge-id="dashboard-to-ingress" data-composition-points="520,640;550,640;550,292;485,292" d="M 520 640 L 542 640 Q 550 640 550 632 L 550 300 Q 550 292 542 292 L 485 292" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
         <path data-edge-from="ingress" data-edge-to="proxy" data-edge-label="POST / · agent route" data-edge-key="2" data-edge-id="ingress-to-proxy" data-composition-points="485,292;650,292" d="M 485 292 L 650 292" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
         <path data-edge-from="ingress" data-edge-to="human-api" data-edge-label="/api/v1/* · human route + role guard" data-edge-key="3" data-edge-id="ingress-to-human-api" data-composition-points="392.5,250;392.5,190;725,190;725,122" d="M 392.5 250 L 392.5 198 Q 392.5 190 400.5 190 L 717 190 Q 725 190 725 182 L 725 122" class="a-security" stroke-width="1.5" marker-end="url(#arrowhead-security)"/>
         <path data-edge-from="proxy" data-edge-to="opa" data-edge-label="EvalInput" data-edge-key="4" data-edge-id="proxy-to-opa" data-composition-points="735,250;735,230;1050,230;1050,216" d="M 735 250 L 735 238 Q 735 230 743 230 L 1043 230 Q 1050 230 1050 223 L 1050 216" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
@@ -5045,7 +5045,7 @@
         <path data-edge-from="proxy" data-edge-to="ledger" data-edge-label="append decision before routing · fail closed" data-edge-key="9" data-edge-id="proxy-to-ledger" data-composition-points="735,334;735,390;675,390;675,430" d="M 735 334 L 735 382 Q 735 390 727 390 L 683 390 Q 675 390 675 398 L 675 430" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
         <path data-edge-from="proxy" data-edge-to="target" data-edge-label="ALLOW · forward" data-edge-key="10" data-edge-id="proxy-to-target" data-composition-points="820,292;1115,292" d="M 820 292 L 1115 292" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
         <path data-edge-from="proxy" data-edge-to="quarantine" data-edge-label="QUARANTINE · create pending item" data-edge-key="11" data-edge-id="proxy-to-quarantine" data-composition-points="735,334;735,358;786,358;786,475;810,475" d="M 735 334 L 735 350 Q 735 358 743 358 L 778 358 Q 786 358 786 366 L 786 467 Q 786 475 794 475 L 810 475" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
-        <path data-edge-from="human-api" data-edge-to="quarantine" data-edge-label="list + approve / deny" data-edge-key="12" data-edge-id="human-api-to-quarantine" data-composition-points="620,76;570,76;570,0;1330,0;1330,560;915,560;915,520" d="M 620 76 L 578 76 Q 570 76 570 68 L 570 8 Q 570 0 578 0 L 1322 0 Q 1330 0 1330 8 L 1330 552 Q 1330 560 1322 560 L 923 560 Q 915 560 915 552 L 915 520" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="human-api" data-edge-to="quarantine" data-edge-label="reads inbox · approve / deny" data-edge-key="12" data-edge-id="human-api-to-quarantine" data-composition-points="620,76;570,76;570,0;1330,0;1330,560;915,560;915,520" d="M 620 76 L 578 76 Q 570 76 570 68 L 570 8 Q 570 0 578 0 L 1322 0 Q 1330 0 1330 8 L 1330 552 Q 1330 560 1322 560 L 923 560 Q 915 560 915 552 L 915 520" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
         <path data-edge-from="worker" data-edge-to="quarantine" data-edge-label="claim / status" data-edge-key="13" data-edge-id="worker-to-quarantine" data-composition-points="1100,476;1076,476;1076,492;1044,492;1044,475;1020,475" d="M 1100 476 L 1084 476 Q 1076 476 1076 484 L 1076 484 Q 1076 492 1068 492 L 1052 492 Q 1044 492 1044 484 L 1044 483 Q 1044 475 1036 475 L 1020 475" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
         <path data-edge-from="worker" data-edge-to="target" data-edge-label="replay approved payload · Idempotency-Key" data-edge-key="14" data-edge-id="worker-to-target" data-composition-points="1205,430;1205,324" d="M 1205 430 L 1205 324" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
         <path data-edge-from="reviewer" data-edge-to="dashboard" data-edge-label="review interaction" data-edge-key="15" data-edge-id="reviewer-to-dashboard" data-composition-points="210,638;330,638" d="M 210 638 L 330 638" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
@@ -5203,9 +5203,9 @@
           <rect x="206.4" y="272" width="77.2" height="14" rx="3" class="c-mask"/>
           <text x="245" y="282" class="t-backend" font-size="8" text-anchor="middle">JSON-RPC / MCP</text>
         </g>
-        <g data-detail="context" data-edge-from="dashboard" data-edge-to="ingress" data-edge-label="reviewer/admin REST request" data-edge-key="1" data-edge-id="dashboard-to-ingress">
-          <rect x="420.2" y="390" width="139.6" height="14" rx="3" class="c-mask"/>
-          <text x="490" y="400" class="t-muted" font-size="8" text-anchor="middle">reviewer/admin REST request</text>
+        <g data-detail="context" data-edge-from="dashboard" data-edge-to="ingress" data-edge-label="reviewer/admin REST · inbox + ledger views" data-edge-key="1" data-edge-id="dashboard-to-ingress">
+          <rect x="384.2" y="390" width="211.6" height="14" rx="3" class="c-mask"/>
+          <text x="490" y="400" class="t-muted" font-size="8" text-anchor="middle">reviewer/admin REST · inbox + ledger views</text>
         </g>
         <g data-detail="context" data-edge-from="ingress" data-edge-to="proxy" data-edge-label="POST / · agent route" data-edge-key="2" data-edge-id="ingress-to-proxy">
           <rect x="497" y="230" width="106" height="14" rx="3" class="c-mask"/>
@@ -5247,9 +5247,9 @@
           <rect x="818.2" y="360" width="163.6" height="14" rx="3" class="c-mask"/>
           <text x="900" y="370" class="t-muted" font-size="8" text-anchor="middle">QUARANTINE · create pending item</text>
         </g>
-        <g data-detail="context" data-edge-from="human-api" data-edge-to="quarantine" data-edge-label="list + approve / deny" data-edge-key="12" data-edge-id="human-api-to-quarantine">
-          <rect x="799.6" y="540" width="110.8" height="14" rx="3" class="c-mask"/>
-          <text x="855" y="550" class="t-muted" font-size="8" text-anchor="middle">list + approve / deny</text>
+        <g data-detail="context" data-edge-from="human-api" data-edge-to="quarantine" data-edge-label="reads inbox · approve / deny" data-edge-key="12" data-edge-id="human-api-to-quarantine">
+          <rect x="782.8" y="540" width="144.4" height="14" rx="3" class="c-mask"/>
+          <text x="855" y="550" class="t-muted" font-size="8" text-anchor="middle">reads inbox · approve / deny</text>
         </g>
         <g data-detail="context" data-edge-from="worker" data-edge-to="quarantine" data-edge-label="claim / status" data-edge-key="13" data-edge-id="worker-to-quarantine">
           <rect x="1021.4" y="390" width="77.2" height="14" rx="3" class="c-mask"/>
