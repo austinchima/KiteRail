@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
+	"github.com/austinchima/kiterail/internal/auth"
 	"github.com/austinchima/kiterail/internal/db"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -73,8 +75,15 @@ type MockLedgerStore struct {
 }
 
 func (m *MockLedgerStore) Append(ctx context.Context, entry db.LedgerEntry) error {
+	if m.Err != nil {
+		return m.Err
+	}
 	m.Entries = append(m.Entries, entry)
-	return m.Err
+	return nil
+}
+
+func agentCtx(ctx context.Context, id string) context.Context {
+	return auth.WithIdentity(ctx, auth.Identity{ID: id, Role: auth.RoleAgent})
 }
 
 // Tests
@@ -112,7 +121,7 @@ func TestServeHTTP_Allow(t *testing.T) {
 	body, _ := json.Marshal(payload)
 
 	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
-	req = req.WithContext(context.WithValue(req.Context(), agentContextKey, "agent_1"))
+	req = req.WithContext(agentCtx(req.Context(), "agent_1"))
 	rr := httptest.NewRecorder()
 
 	handler.ServeHTTP(rr, req)
@@ -150,7 +159,7 @@ func TestServeHTTP_Deny(t *testing.T) {
 	body, _ := json.Marshal(payload)
 
 	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
-	req = req.WithContext(context.WithValue(req.Context(), agentContextKey, "agent_2"))
+	req = req.WithContext(agentCtx(req.Context(), "agent_2"))
 	rr := httptest.NewRecorder()
 
 	handler.ServeHTTP(rr, req)
@@ -188,7 +197,7 @@ func TestServeHTTP_Quarantine(t *testing.T) {
 	body, _ := json.Marshal(payload)
 
 	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
-	req = req.WithContext(context.WithValue(req.Context(), agentContextKey, "agent_3"))
+	req = req.WithContext(agentCtx(req.Context(), "agent_3"))
 	rr := httptest.NewRecorder()
 
 	handler.ServeHTTP(rr, req)
@@ -211,18 +220,132 @@ func TestServeHTTP_Quarantine(t *testing.T) {
 	assert.Equal(t, "suspicious_tool", qStore.CreatedItems[0].Tool)
 }
 
+// --- Fail-closed ingress (#2) ---
+
+func TestServeHTTP_FailClosed_Ingress(t *testing.T) {
+	logger := zap.NewNop()
+	forwarded := false
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		forwarded = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+
+	newProxy := func() *Handler {
+		h, err := NewHandler(logger, backend.URL,
+			&MockOPAEngine{Decision: ProxyDecision{Action: "allow"}},
+			&MockEventPublisher{}, &MockQuarantineStore{}, &MockLedgerStore{})
+		require.NoError(t, err)
+		return h
+	}
+
+	cases := []struct {
+		name   string
+		method string
+		body   string
+	}{
+		{"GET rejected", http.MethodGet, `{}`},
+		{"PUT rejected", http.MethodPut, `{"method":"x","params":{}}`},
+		{"non-JSON rejected", http.MethodPost, "this is not json"},
+		{"missing params rejected", http.MethodPost, `{"method":"tools/call"}`},
+		{"missing method rejected", http.MethodPost, `{"params":{"name":"t"}}`},
+		{"non-string method rejected", http.MethodPost, `{"method":123,"params":{}}`},
+		{"empty method rejected", http.MethodPost, `{"method":"","params":{}}`},
+		{"tools/call without name rejected", http.MethodPost, `{"method":"tools/call","params":{"arguments":{}}}`},
+		{"non-object params rejected", http.MethodPost, `{"method":"x","params":[1,2]}`},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			forwarded = false
+			req := httptest.NewRequest(tc.method, "/", bytes.NewBufferString(tc.body))
+			req = req.WithContext(agentCtx(req.Context(), "agent_x"))
+			rr := httptest.NewRecorder()
+
+			newProxy().ServeHTTP(rr, req)
+
+			assert.NotEqual(t, http.StatusOK, rr.Code, "malformed request must not succeed")
+			assert.False(t, forwarded, "malformed request must never reach the target")
+		})
+	}
+}
+
+func TestServeHTTP_FailClosed_OnBodyTooLarge(t *testing.T) {
+	logger := zap.NewNop()
+	forwarded := false
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		forwarded = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+
+	handler, err := NewHandler(logger, backend.URL,
+		&MockOPAEngine{Decision: ProxyDecision{Action: "allow"}},
+		&MockEventPublisher{}, &MockQuarantineStore{}, &MockLedgerStore{},
+		WithMaxBodyBytes(64),
+	)
+	require.NoError(t, err)
+
+	big := make([]byte, 128)
+	for i := range big {
+		big[i] = 'a'
+	}
+	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(big))
+	req = req.WithContext(agentCtx(req.Context(), "agent_big"))
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusRequestEntityTooLarge, rr.Code)
+	assert.False(t, forwarded)
+}
+
+// --- Fail-closed ledger guarantee (#4) ---
+
+func TestServeHTTP_FailClosed_OnLedgerError(t *testing.T) {
+	logger := zap.NewNop()
+	forwarded := false
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		forwarded = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+
+	handler, err := NewHandler(logger, backend.URL,
+		&MockOPAEngine{Decision: ProxyDecision{Action: "allow", Rule: "allow_all"}},
+		&MockEventPublisher{}, &MockQuarantineStore{},
+		&MockLedgerStore{Err: assert.AnError},
+	)
+	require.NoError(t, err)
+
+	body, _ := json.Marshal(map[string]interface{}{"method": "some_tool", "params": map[string]interface{}{}})
+	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
+	req = req.WithContext(agentCtx(req.Context(), "agent_l"))
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusServiceUnavailable, rr.Code)
+	assert.False(t, forwarded, "allowed requests MUST NOT execute when the audit ledger is unavailable")
+}
+
+// --- Auth middleware ---
+
 func TestAuthMiddleware(t *testing.T) {
 	logger := zap.NewNop()
-	apiKeys := map[string]string{
-		"valid-key": "agent-alpha",
+	identities := map[string]auth.Identity{
+		"agent-key":    {ID: "agent-alpha", Role: auth.RoleAgent},
+		"reviewer-key": {ID: "reviewer-bob", Role: auth.RoleReviewer},
 	}
 
 	nextHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		agent := AgentFromContext(r.Context())
-		w.Write([]byte(agent))
+		id, ok := auth.FromContext(r.Context())
+		if ok {
+			w.Write([]byte(string(id.Role) + ":" + id.ID))
+		}
 	})
 
-	middleware := AuthMiddleware(apiKeys, logger, nextHandler)
+	middleware := auth.Middleware(identities, logger, nextHandler)
 
 	tests := []struct {
 		name       string
@@ -231,10 +354,8 @@ func TestAuthMiddleware(t *testing.T) {
 		expectBody string
 	}{
 		{
-			name: "No Auth",
-			setupReq: func() *http.Request {
-				return httptest.NewRequest(http.MethodGet, "/", nil)
-			},
+			name:       "No Auth",
+			setupReq:   func() *http.Request { return httptest.NewRequest(http.MethodGet, "/", nil) },
 			expectCode: http.StatusUnauthorized,
 		},
 		{
@@ -247,22 +368,30 @@ func TestAuthMiddleware(t *testing.T) {
 			expectCode: http.StatusForbidden,
 		},
 		{
-			name: "Valid Auth Header",
+			name: "Valid Agent Key",
 			setupReq: func() *http.Request {
 				req := httptest.NewRequest(http.MethodGet, "/", nil)
-				req.Header.Set("Authorization", "Bearer valid-key")
+				req.Header.Set("Authorization", "Bearer agent-key")
 				return req
 			},
 			expectCode: http.StatusOK,
-			expectBody: "agent-alpha",
+			expectBody: "agent:agent-alpha",
 		},
 		{
-			name: "Valid Token Query Param",
+			name: "Query Param Token Rejected",
 			setupReq: func() *http.Request {
-				return httptest.NewRequest(http.MethodGet, "/?token=valid-key", nil)
+				return httptest.NewRequest(http.MethodGet, "/?token=agent-key", nil)
 			},
-			expectCode: http.StatusOK,
-			expectBody: "agent-alpha",
+			expectCode: http.StatusUnauthorized,
+		},
+		{
+			name: "Malformed Header Rejected",
+			setupReq: func() *http.Request {
+				req := httptest.NewRequest(http.MethodGet, "/", nil)
+				req.Header.Set("Authorization", "agent-key")
+				return req
+			},
+			expectCode: http.StatusUnauthorized,
 		},
 	}
 
@@ -278,4 +407,88 @@ func TestAuthMiddleware(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRequireRole(t *testing.T) {
+	guard := auth.RequireRole(auth.RoleReviewer, auth.RoleAdmin)
+	ok := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+	handler := guard(ok)
+
+	tests := []struct {
+		name     string
+		identity auth.Identity
+		want     int
+	}{
+		{"agent forbidden", auth.Identity{ID: "a", Role: auth.RoleAgent}, http.StatusForbidden},
+		{"reviewer allowed", auth.Identity{ID: "r", Role: auth.RoleReviewer}, http.StatusOK},
+		{"admin allowed", auth.Identity{ID: "d", Role: auth.RoleAdmin}, http.StatusOK},
+		{"no identity forbidden", auth.Identity{}, http.StatusForbidden},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/", nil)
+			if tc.identity.ID != "" || tc.identity.Role != "" {
+				req = req.WithContext(auth.WithIdentity(req.Context(), tc.identity))
+			}
+			rr := httptest.NewRecorder()
+			handler.ServeHTTP(rr, req)
+			assert.Equal(t, tc.want, rr.Code)
+		})
+	}
+}
+
+// --- Authorization header stripping ---
+
+func TestServeHTTP_Allow_StripsAuthorizationHeader(t *testing.T) {
+	logger := zap.NewNop()
+	var upstreamAuth atomic.Value
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamAuth.Store(r.Header.Get("Authorization"))
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+
+	engine := &MockOPAEngine{Decision: ProxyDecision{Action: "allow", Rule: "allow_all"}}
+	handler, err := NewHandler(logger, backend.URL, engine, &MockEventPublisher{}, &MockQuarantineStore{}, &MockLedgerStore{})
+	require.NoError(t, err)
+
+	payload := map[string]interface{}{"method": "some_tool", "params": map[string]interface{}{}}
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer sk_secret_do_not_leak")
+	req = req.WithContext(agentCtx(req.Context(), "agent_1"))
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code)
+	assert.Equal(t, "", upstreamAuth.Load(), "Authorization header must not reach the target")
+}
+
+func TestServeHTTP_TargetAuthTokenApplied(t *testing.T) {
+	logger := zap.NewNop()
+	var upstreamAuth atomic.Value
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamAuth.Store(r.Header.Get("Authorization"))
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+
+	handler, err := NewHandler(logger, backend.URL,
+		&MockOPAEngine{Decision: ProxyDecision{Action: "allow"}},
+		&MockEventPublisher{}, &MockQuarantineStore{}, &MockLedgerStore{},
+		WithTargetAuthToken("svc-credential"),
+	)
+	require.NoError(t, err)
+
+	body, _ := json.Marshal(map[string]interface{}{"method": "some_tool", "params": map[string]interface{}{}})
+	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
+	req = req.WithContext(agentCtx(req.Context(), "agent_1"))
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code)
+	assert.Equal(t, "Bearer svc-credential", upstreamAuth.Load())
 }

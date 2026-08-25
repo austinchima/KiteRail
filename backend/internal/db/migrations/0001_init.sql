@@ -1,8 +1,6 @@
--- Schema for KiteRail ledger and quarantine tables
--- Mirror of internal/db/migrations (applied by internal/db/migrate.go).
--- This file is used by sqlc to generate type-safe Go code
+-- Canonical KiteRail schema. Applied by internal/db/migrate.go in order.
+-- sqlc reads the mirror of this schema from sql/schema.sql.
 
--- Ledger table for tamper-evident audit trail
 CREATE TABLE IF NOT EXISTS ledger (
     seq_num BIGSERIAL PRIMARY KEY,
     timestamp TIMESTAMPTZ NOT NULL,
@@ -19,7 +17,6 @@ CREATE TABLE IF NOT EXISTS ledger (
 CREATE INDEX IF NOT EXISTS idx_ledger_timestamp ON ledger (timestamp);
 CREATE INDEX IF NOT EXISTS idx_ledger_agent ON ledger (agent);
 
--- Quarantine table for human-in-the-loop approval queue
 CREATE TABLE IF NOT EXISTS quarantine (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     agent_id TEXT NOT NULL,

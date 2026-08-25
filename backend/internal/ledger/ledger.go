@@ -1,66 +1,77 @@
 package ledger
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
-	"strings"
+	"math/rand/v2"
 	"time"
 
 	"github.com/austinchima/kiterail/internal/db"
-	_ "github.com/lib/pq"
+	"github.com/lib/pq"
 )
 
-const Schema = `
-CREATE TABLE IF NOT EXISTS ledger (
-    seq_num SERIAL PRIMARY KEY,
-    timestamp TIMESTAMP,
-    agent TEXT,
-    tool TEXT,
-    decision TEXT,
-    policy_rule TEXT,
-    payload_hash TEXT,
-    prev_hash TEXT,
-    hash TEXT
-);
-`
-
-type Store struct {
-	q db.Querier
-}
-
-func New(sqlDB *sql.DB) (*Store, error) {
-	if _, err := sqlDB.Exec(Schema); err != nil {
-		return nil, fmt.Errorf("failed to create ledger schema: %w", err)
-	}
-	return &Store{q: db.New(sqlDB)}, nil
+// normalizeTimestamp truncates to microseconds in UTC — the exact precision
+// Postgres stores — so hashes computed before insert match hashes recomputed
+// from rows read back during Verify().
+func normalizeTimestamp(t time.Time) time.Time {
+	return t.UTC().Truncate(time.Microsecond)
 }
 
 func calculateHash(entry db.LedgerEntry) string {
-	data := fmt.Sprintf("%d%s%s%s%s%s%s",
-		entry.SeqNum,
-		entry.Timestamp.UTC().Format(time.RFC3339Nano),
+	// Length-prefixed canonical encoding: unambiguous even when fields
+	// contain delimiter characters (unlike pipe-joined strings).
+	fields := []string{
+		fmt.Sprintf("%d", entry.SeqNum),
+		normalizeTimestamp(entry.Timestamp).Format("2006-01-02T15:04:05.000000Z07:00"),
 		entry.Agent,
 		entry.Tool,
 		entry.Decision,
+		entry.PolicyRule,
 		entry.PayloadHash,
+		entry.RequestID,
 		entry.PrevHash,
-	)
-	hash := sha256.Sum256([]byte(data))
+	}
+	var data bytes.Buffer
+	for _, f := range fields {
+		fmt.Fprintf(&data, "%d:%s;", len(f), f)
+	}
+	hash := sha256.Sum256(data.Bytes())
 	return hex.EncodeToString(hash[:])
 }
 
+type Store struct {
+	q *db.Queries
+}
+
+func New(sqlDB *sql.DB) (*Store, error) {
+	// Schema is applied by internal/db.Migrate — no ad-hoc DDL here.
+	return &Store{q: db.New(sqlDB)}, nil
+}
+
 func (s *Store) Append(ctx context.Context, entry db.LedgerEntry) error {
-	const maxRetries = 3
-	for attempt := 0; attempt < maxRetries; attempt++ {
+	// SERIALIZABLE appends contend on the single chain-tip row, so Postgres
+	// legitimately aborts losers (SQLSTATE 40001). Exponential backoff with
+	// jitter prevents synchronized retry storms; the schedule is bounded
+	// (~2s worst case) and cancellable via ctx.
+	const maxRetries = 8
+	for attempt := range maxRetries {
 		err := s.appendOnce(ctx, entry)
 		if err == nil {
 			return nil
 		}
 		if isSerializationFailure(err) && attempt < maxRetries-1 {
-			time.Sleep(time.Duration(5*(attempt+1)) * time.Millisecond)
+			backoff := time.Duration(1<<uint(attempt)) * 10 * time.Millisecond
+			backoff += time.Duration(rand.Int64N(int64(backoff/2) + 1))
+			select {
+			case <-time.After(backoff):
+			case <-ctx.Done():
+				return fmt.Errorf("ledger append canceled while waiting to retry: %w", ctx.Err())
+			}
 			continue
 		}
 		return err
@@ -69,12 +80,8 @@ func (s *Store) Append(ctx context.Context, entry db.LedgerEntry) error {
 }
 
 func isSerializationFailure(err error) bool {
-	if err == nil {
-		return false
-	}
-	errStr := err.Error()
-	return len(errStr) >= 5 && errStr[:5] == "pq: E" &&
-		(strings.Contains(errStr, "40001") || strings.Contains(errStr, "serialization"))
+	var pqErr *pq.Error
+	return errors.As(err, &pqErr) && pqErr.Code == "40001"
 }
 
 func (s *Store) appendOnce(ctx context.Context, entry db.LedgerEntry) error {
@@ -85,24 +92,33 @@ func (s *Store) appendOnce(ctx context.Context, entry db.LedgerEntry) error {
 	}
 	defer tx.Rollback()
 
-	var prevHash string
-	var seqNum int
-	err = tx.QueryRowContext(ctx, "SELECT COALESCE(hash, ''), COALESCE(seq_num, 0) FROM ledger ORDER BY seq_num DESC LIMIT 1 FOR UPDATE").Scan(&prevHash, &seqNum)
-	if err != nil && err != sql.ErrNoRows {
+	qtx := s.q.WithTx(tx)
+
+	tip, err := qtx.GetLatestLedgerEntry(ctx)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("failed to get previous hash: %w", err)
 	}
 
-	entry.PrevHash = prevHash
-	entry.SeqNum = seqNum + 1
+	entry.PrevHash = tip.Hash
+	entry.SeqNum = tip.SeqNum + 1
 	if entry.Timestamp.IsZero() {
 		entry.Timestamp = time.Now()
 	}
+	entry.Timestamp = normalizeTimestamp(entry.Timestamp)
 	entry.Hash = calculateHash(entry)
 
-	_, err = tx.ExecContext(ctx,
-		"INSERT INTO ledger (seq_num, timestamp, agent, tool, decision, policy_rule, payload_hash, prev_hash, hash) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
-		entry.SeqNum, entry.Timestamp, entry.Agent, entry.Tool, entry.Decision, entry.PolicyRule, entry.PayloadHash, entry.PrevHash, entry.Hash,
-	)
+	err = qtx.InsertLedgerEntry(ctx, db.InsertLedgerEntryParams{
+		SeqNum:      entry.SeqNum,
+		Timestamp:   entry.Timestamp,
+		Agent:       entry.Agent,
+		Tool:        entry.Tool,
+		Decision:    entry.Decision,
+		PolicyRule:  entry.PolicyRule,
+		PayloadHash: entry.PayloadHash,
+		PrevHash:    entry.PrevHash,
+		Hash:        entry.Hash,
+		RequestID:   entry.RequestID,
+	})
 	if err != nil {
 		return fmt.Errorf("failed to insert ledger entry: %w", err)
 	}
@@ -112,7 +128,7 @@ func (s *Store) appendOnce(ctx context.Context, entry db.LedgerEntry) error {
 
 func (s *Store) Verify(ctx context.Context) (bool, error) {
 	sqlDB := s.q.DB()
-	rows, err := sqlDB.QueryContext(ctx, "SELECT seq_num, timestamp, agent, tool, decision, policy_rule, payload_hash, prev_hash, hash FROM ledger ORDER BY seq_num ASC")
+	rows, err := sqlDB.QueryContext(ctx, "SELECT seq_num, timestamp, agent, tool, decision, policy_rule, payload_hash, prev_hash, hash, request_id FROM ledger ORDER BY seq_num ASC")
 	if err != nil {
 		return false, fmt.Errorf("failed to query ledger: %w", err)
 	}
@@ -121,7 +137,7 @@ func (s *Store) Verify(ctx context.Context) (bool, error) {
 	var prevHash string
 	for rows.Next() {
 		var entry db.LedgerEntry
-		if err := rows.Scan(&entry.SeqNum, &entry.Timestamp, &entry.Agent, &entry.Tool, &entry.Decision, &entry.PolicyRule, &entry.PayloadHash, &entry.PrevHash, &entry.Hash); err != nil {
+		if err := rows.Scan(&entry.SeqNum, &entry.Timestamp, &entry.Agent, &entry.Tool, &entry.Decision, &entry.PolicyRule, &entry.PayloadHash, &entry.PrevHash, &entry.Hash, &entry.RequestID); err != nil {
 			return false, fmt.Errorf("failed to scan ledger entry: %w", err)
 		}
 

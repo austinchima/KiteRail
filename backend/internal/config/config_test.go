@@ -2,18 +2,34 @@ package config
 
 import (
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func TestLoad_Defaults(t *testing.T) {
-	// Ensure no env vars interfere
-	os.Clearenv()
+func clearKiteRailEnv(t *testing.T) {
+	t.Helper()
+	for _, kv := range os.Environ() {
+		if strings.HasPrefix(kv, "KITERAIL_") {
+			os.Unsetenv(strings.SplitN(kv, "=", 2)[0])
+		}
+	}
+	t.Cleanup(func() {
+		for _, kv := range os.Environ() {
+			if strings.HasPrefix(kv, "KITERAIL_") {
+				os.Unsetenv(strings.SplitN(kv, "=", 2)[0])
+			}
+		}
+	})
+}
 
-	cfg, err := Load("")
-	require.NoError(t, err)
+func TestLoad_Defaults(t *testing.T) {
+	clearKiteRailEnv(t)
+
+	cfg := defaultConfig()
 
 	assert.Equal(t, ":8080", cfg.ListenAddr)
 	assert.Equal(t, "./policies", cfg.PolicyDir)
@@ -22,10 +38,53 @@ func TestLoad_Defaults(t *testing.T) {
 	assert.Equal(t, "info", cfg.LogLevel)
 	assert.Empty(t, cfg.APIKeys)
 	assert.Empty(t, cfg.TargetURL)
+
+	// Defaults alone are not a valid production configuration.
+	require.Error(t, cfg.Validate())
+}
+
+func TestValidate_RequiresSeparatedTrustDomains(t *testing.T) {
+	base := defaultConfig()
+	base.TargetURL = "https://upstream.example.com"
+	base.PostgresDSN = "postgres://prod@db/prod?sslmode=require"
+	base.APIKeys = map[string]string{"sk_live_a": "agent-1"}
+
+	// Agents only — must be rejected: agents could approve their own actions.
+	err := base.Validate()
+	require.Error(t, err)
+
+	base.ReviewerAPIKeys = map[string]string{"rvw_key": "jane"}
+	require.NoError(t, base.Validate())
+
+	// Cross-role credential reuse must be rejected.
+	base.AdminAPIKeys = map[string]string{"sk_live_a": "root"}
+	err = base.Validate()
+	require.ErrorContains(t, err, "duplicates")
+}
+
+func TestValidate_ProductionRejectsDevCredentials(t *testing.T) {
+	t.Setenv("KITERAIL_ALLOW_DEV_CREDENTIALS", "")
+
+	cfg := defaultConfig()
+	cfg.Environment = "production"
+	cfg.TargetURL = "https://upstream.example.com"
+	cfg.PostgresDSN = "postgres://kiterail:kiterail@localhost:5432/kiterail?sslmode=disable"
+	cfg.APIKeys = map[string]string{"sk_dev_123": "agent-1"}
+	cfg.ReviewerAPIKeys = map[string]string{"rvw": "jane"}
+	cfg.TLSCertFile = "/certs/tls.crt"
+	cfg.TLSKeyFile = "/certs/tls.key"
+
+	err := cfg.Validate()
+	require.Error(t, err)
+
+	// Explicit override is honoured.
+	t.Setenv("KITERAIL_ALLOW_DEV_CREDENTIALS", "1")
+	assert.NoError(t, cfg.Validate())
 }
 
 func TestLoad_EnvVars(t *testing.T) {
-	os.Clearenv()
+	clearKiteRailEnv(t)
+
 	os.Setenv("KITERAIL_LISTEN_ADDR", ":9090")
 	os.Setenv("KITERAIL_TARGET_URL", "http://example.com")
 	os.Setenv("KITERAIL_POLICY_DIR", "/custom/policies")
@@ -33,8 +92,7 @@ func TestLoad_EnvVars(t *testing.T) {
 	os.Setenv("KITERAIL_POSTGRES_DSN", "postgres://user:pass@remote/db")
 	os.Setenv("KITERAIL_LOG_LEVEL", "debug")
 	os.Setenv("KITERAIL_API_KEYS", "key1:val1,key2:val2")
-
-	defer os.Clearenv()
+	os.Setenv("KITERAIL_REVIEWER_API_KEYS", "rvw1:jane")
 
 	cfg, err := Load("")
 	require.NoError(t, err)
@@ -49,14 +107,12 @@ func TestLoad_EnvVars(t *testing.T) {
 	assert.Len(t, cfg.APIKeys, 2)
 	assert.Equal(t, "val1", cfg.APIKeys["key1"])
 	assert.Equal(t, "val2", cfg.APIKeys["key2"])
+	assert.Equal(t, "jane", cfg.ReviewerAPIKeys["rvw1"])
 }
 
 func TestLoad_YAML(t *testing.T) {
-	os.Clearenv()
-	tmpFile, err := os.CreateTemp(".", "config-*.yaml")
-	require.NoError(t, err)
-	defer os.Remove(tmpFile.Name())
-	yamlPath := tmpFile.Name()
+	clearKiteRailEnv(t)
+	yamlPath := filepath.Join(t.TempDir(), "config.yaml")
 
 	yamlContent := `
 listen_addr: ":8081"
@@ -67,9 +123,10 @@ postgres_dsn: "postgres://yaml/db"
 log_level: "warn"
 api_keys:
   yamlkey: yamlval
+reviewer_api_keys:
+  rvwyaml: janeyaml
 `
-	err = os.WriteFile(yamlPath, []byte(yamlContent), 0644)
-	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(yamlPath, []byte(yamlContent), 0644))
 
 	cfg, err := Load(yamlPath)
 	require.NoError(t, err)
@@ -83,4 +140,5 @@ api_keys:
 
 	assert.Len(t, cfg.APIKeys, 1)
 	assert.Equal(t, "yamlval", cfg.APIKeys["yamlkey"])
+	assert.Equal(t, "janeyaml", cfg.ReviewerAPIKeys["rvwyaml"])
 }
