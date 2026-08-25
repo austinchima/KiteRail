@@ -69,6 +69,7 @@ jobs:
   dashboard:
     name: Dashboard Type-Check & Build
     runs-on: ubuntu-latest
+    if: ${{ hashFiles('web/package-lock.json') != '' }}
     defaults:
       run:
         working-directory: web
