@@ -43,6 +43,16 @@ jobs:
       - name: Download dependencies
         run: go mod download
 
+      - name: Set up sqlc
+        uses: sqlc-dev/setup-sqlc@v4
+        with:
+          sqlc-version: 'v1.31.1'
+
+      - name: Verify generated DB code is fresh
+        run: |
+          sqlc generate
+          git diff --exit-code -- internal/db
+
       - name: Vet
         run: go vet ./...
 
@@ -53,3 +63,41 @@ jobs:
 
       - name: Build
         run: go build -o /dev/null ./cmd/...
+
+  dashboard:
+    name: Dashboard Type-Check & Build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: Type-check
+        run: npm run lint
+      - name: Build
+        run: npm run build
+
+  policy:
+    name: Policy Check & Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: open-policy-agent/setup-opa@v2
+        with:
+          version: latest
+      - name: Check policies (strict, catches conflicts & unused vars)
+        run: opa check --strict policies/
+      - name: Run policy unit tests
+        run: opa test policies/ tests/policies/ -v
+      - name: Smoke-eval quickstart payload (must not error, must quarantine)
+        run: |
+          echo '{"tool": "stripe.charge.refund", "arguments": {"amount": 1500}, "agent": "ci"}' > /tmp/in.json
+          action=$(opa eval -d policies/ -i /tmp/in.json --format=values "data.kiterail.authz.decision" | jq -r '.[0].action')
+          test "$action" = "quarantine" || { echo "expected quarantine, got: $action"; exit 1; }

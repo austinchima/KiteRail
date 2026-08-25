@@ -41,3 +41,6 @@ graphify-out/
 go_syntax_guide.md
 codebase.md
 skills-lock.json
+.tmp/*
+blog-posts/
+backend/internal/config/config-*.yaml

@@ -36,10 +36,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		h.handleList(w, r)
-	case http.MethodPatch:
-		h.handleUpdate(w, r)
-	case http.MethodPut, http.MethodPost:
-		h.handleSave(w, r)
+	case http.MethodPatch, http.MethodPut, http.MethodPost:
+		// Policies are immutable GitOps assets in v1.0: change them via git,
+		// not the API. Runtime policy mutation would let a single compromised
+		// admin credential rewrite the enforcement rulebook.
+		http.Error(w, `{"error": "policies are immutable; modify via version control"}`, http.StatusMethodNotAllowed)
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
@@ -55,77 +56,6 @@ func (h *Handler) handleList(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(policies)
-}
-
-func (h *Handler) handleUpdate(w http.ResponseWriter, r *http.Request) {
-	// Expected path: /api/v1/policies/{id}
-	parts := strings.Split(r.URL.Path, "/")
-	if len(parts) == 0 {
-		http.Error(w, "Missing policy ID", http.StatusBadRequest)
-		return
-	}
-	id := parts[len(parts)-1]
-	if id == "" || id == "policies" {
-		http.Error(w, "Missing policy ID", http.StatusBadRequest)
-		return
-	}
-
-	var req struct {
-		Enabled      bool   `json:"enabled"`
-		Confirmation string `json:"confirmation"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
-		return
-	}
-
-	if !req.Enabled && req.Confirmation != "CONFIRM" {
-		http.Error(w, "Missing or invalid confirmation to disable policy", http.StatusBadRequest)
-		return
-	}
-
-	if err := h.store.UpdateEnabled(r.Context(), id, req.Enabled); err != nil {
-		h.logger.Error("Failed to update policy", zap.String("id", id), zap.Error(err))
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
-
-	h.engine.Reload(r.Context())
-
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{"status": "success"})
-}
-
-func (h *Handler) handleSave(w http.ResponseWriter, r *http.Request) {
-	parts := strings.Split(r.URL.Path, "/")
-	var id string
-	if len(parts) > 0 {
-		id = parts[len(parts)-1]
-	}
-	if id == "" || id == "policies" {
-		http.Error(w, "Missing policy ID", http.StatusBadRequest)
-		return
-	}
-
-	var req struct {
-		Code    string `json:"code"`
-		Enabled bool   `json:"enabled"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
-		return
-	}
-
-	if err := h.store.Save(r.Context(), id, req.Code, req.Enabled); err != nil {
-		h.logger.Error("Failed to save policy", zap.String("id", id), zap.Error(err))
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
-
-	h.engine.Reload(r.Context())
-
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{"status": "success"})
 }
 
 func (h *Handler) handleSimulate(w http.ResponseWriter, r *http.Request) {

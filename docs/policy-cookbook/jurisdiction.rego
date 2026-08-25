@@ -7,7 +7,7 @@ import rego.v1
 
 embargoed_countries := {"CU", "IR", "KP", "SY"}
 
-decision := {"action": "deny", "rule": "embargoed_jurisdiction", "explanation": "Transactions to this jurisdiction are prohibited"} if {
+decisions contains {"action": "deny", "rule": "embargoed_jurisdiction", "explanation": "Transactions to this jurisdiction are prohibited"} if {
 	input.tool == "banking.wire.transfer"
 	input.arguments.destination_country in embargoed_countries
 }
