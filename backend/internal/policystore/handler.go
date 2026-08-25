@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/austinchima/kiterail/internal/opaengine"
-	"github.com/austinchima/kiterail/internal/proxy"
+	"github.com/austinchima/kiterail/internal/types"
 	"go.uber.org/zap"
 )
 
@@ -59,7 +59,7 @@ func (h *Handler) handleList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleSimulate(w http.ResponseWriter, r *http.Request) {
-	var input proxy.EvalInput
+	var input types.EvalInput
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return

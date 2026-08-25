@@ -63,10 +63,10 @@ func corsMiddleware(allowedOrigins []string) func(http.Handler) http.Handler {
 
 // rateLimiterMiddleware enforces a per-identity token bucket.
 type rateLimiter struct {
-	mu      sync.Mutex
-	lim     map[string]*rate.Limiter
-	rps     float64
-	burst   int
+	mu    sync.Mutex
+	lim   map[string]*rate.Limiter
+	rps   float64
+	burst int
 }
 
 func newRateLimiter(rps float64, burst int) *rateLimiter {
