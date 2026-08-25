@@ -7,6 +7,7 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/austinchima/kiterail/internal/db"
+	"github.com/lib/pq"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -16,7 +17,6 @@ func TestNewStore(t *testing.T) {
 	require.NoError(t, err)
 	defer sqlDB.Close()
 
-	mock.ExpectExec("CREATE TABLE IF NOT EXISTS ledger").WillReturnResult(sqlmock.NewResult(1, 1))
 
 	store, err := New(sqlDB)
 	require.NoError(t, err)
@@ -31,7 +31,6 @@ func TestStore_Append(t *testing.T) {
 	require.NoError(t, err)
 	defer sqlDB.Close()
 
-	mock.ExpectExec("CREATE TABLE IF NOT EXISTS ledger").WillReturnResult(sqlmock.NewResult(1, 1))
 
 	store, err := New(sqlDB)
 	require.NoError(t, err)
@@ -59,6 +58,7 @@ func TestStore_Append(t *testing.T) {
 			"hash_test",
 			"prev_hash_123",
 			sqlmock.AnyArg(), // hash
+			sqlmock.AnyArg(), // request_id
 		).WillReturnResult(sqlmock.NewResult(43, 1))
 	mock.ExpectCommit()
 
@@ -69,12 +69,35 @@ func TestStore_Append(t *testing.T) {
 	assert.NoError(t, err)
 }
 
+func TestStore_Append_BackoffRespectsContextCancellation(t *testing.T) {
+	sqlDB, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer sqlDB.Close()
+
+	store, err := New(sqlDB)
+	require.NoError(t, err)
+
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT COALESCE").
+		WillReturnError(&pq.Error{Code: "40001"})
+	mock.ExpectRollback()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(2*time.Millisecond, cancel)
+
+	start := time.Now()
+	err = store.Append(ctx, db.LedgerEntry{Agent: "agent_x"})
+	cancel()
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Less(t, time.Since(start), time.Second,
+		"canceled Append must not sleep through the backoff schedule")
+}
+
 func TestStore_Verify(t *testing.T) {
 	sqlDB, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer sqlDB.Close()
 
-	mock.ExpectExec("CREATE TABLE IF NOT EXISTS ledger").WillReturnResult(sqlmock.NewResult(1, 1))
 
 	store, err := New(sqlDB)
 	require.NoError(t, err)
@@ -85,6 +108,7 @@ func TestStore_Verify(t *testing.T) {
 		Agent:       "agent_1",
 		Tool:        "tool_1",
 		Decision:    "allow",
+		PolicyRule:  "rule_1",
 		PayloadHash: "hash_1",
 		PrevHash:    "",
 	}
@@ -96,16 +120,17 @@ func TestStore_Verify(t *testing.T) {
 		Agent:       "agent_2",
 		Tool:        "tool_2",
 		Decision:    "deny",
+		PolicyRule:  "rule_2",
 		PayloadHash: "hash_2",
 		PrevHash:    entry1.Hash,
 	}
 	entry2.Hash = calculateHash(entry2)
 
-	rows := sqlmock.NewRows([]string{"seq_num", "timestamp", "agent", "tool", "decision", "policy_rule", "payload_hash", "prev_hash", "hash"}).
-		AddRow(entry1.SeqNum, entry1.Timestamp, entry1.Agent, entry1.Tool, entry1.Decision, entry1.PolicyRule, entry1.PayloadHash, entry1.PrevHash, entry1.Hash).
-		AddRow(entry2.SeqNum, entry2.Timestamp, entry2.Agent, entry2.Tool, entry2.Decision, entry2.PolicyRule, entry2.PayloadHash, entry2.PrevHash, entry2.Hash)
+	rows := sqlmock.NewRows([]string{"seq_num", "timestamp", "agent", "tool", "decision", "policy_rule", "payload_hash", "prev_hash", "hash", "request_id"}).
+		AddRow(entry1.SeqNum, entry1.Timestamp, entry1.Agent, entry1.Tool, entry1.Decision, entry1.PolicyRule, entry1.PayloadHash, entry1.PrevHash, entry1.Hash, "").
+		AddRow(entry2.SeqNum, entry2.Timestamp, entry2.Agent, entry2.Tool, entry2.Decision, entry2.PolicyRule, entry2.PayloadHash, entry2.PrevHash, entry2.Hash, "")
 
-	mock.ExpectQuery("SELECT seq_num, timestamp, agent, tool, decision, policy_rule, payload_hash, prev_hash, hash FROM ledger ORDER BY seq_num ASC").
+	mock.ExpectQuery("SELECT (.+) FROM ledger ORDER BY seq_num ASC").
 		WillReturnRows(rows)
 
 	valid, err := store.Verify(context.Background())
@@ -121,7 +146,6 @@ func TestStore_Verify_InvalidChain(t *testing.T) {
 	require.NoError(t, err)
 	defer sqlDB.Close()
 
-	mock.ExpectExec("CREATE TABLE IF NOT EXISTS ledger").WillReturnResult(sqlmock.NewResult(1, 1))
 
 	store, err := New(sqlDB)
 	require.NoError(t, err)
@@ -132,15 +156,16 @@ func TestStore_Verify_InvalidChain(t *testing.T) {
 		Agent:       "agent_1",
 		Tool:        "tool_1",
 		Decision:    "allow",
+		PolicyRule:  "rule_1",
 		PayloadHash: "hash_1",
 		PrevHash:    "",
 		Hash:        "fake_hash_1", // Invalid hash
 	}
 
-	rows := sqlmock.NewRows([]string{"seq_num", "timestamp", "agent", "tool", "decision", "policy_rule", "payload_hash", "prev_hash", "hash"}).
-		AddRow(entry1.SeqNum, entry1.Timestamp, entry1.Agent, entry1.Tool, entry1.Decision, entry1.PolicyRule, entry1.PayloadHash, entry1.PrevHash, entry1.Hash)
+	rows := sqlmock.NewRows([]string{"seq_num", "timestamp", "agent", "tool", "decision", "policy_rule", "payload_hash", "prev_hash", "hash", "request_id"}).
+		AddRow(entry1.SeqNum, entry1.Timestamp, entry1.Agent, entry1.Tool, entry1.Decision, entry1.PolicyRule, entry1.PayloadHash, entry1.PrevHash, entry1.Hash, "")
 
-	mock.ExpectQuery("SELECT seq_num, timestamp, agent, tool, decision, policy_rule, payload_hash, prev_hash, hash FROM ledger ORDER BY seq_num ASC").
+	mock.ExpectQuery("SELECT (.+) FROM ledger ORDER BY seq_num ASC").
 		WillReturnRows(rows)
 
 	valid, err := store.Verify(context.Background())
@@ -149,4 +174,26 @@ func TestStore_Verify_InvalidChain(t *testing.T) {
 
 	err = mock.ExpectationsWereMet()
 	assert.NoError(t, err)
+}
+
+func TestCalculateHash_StableAfterMicrosecondTruncation(t *testing.T) {
+	ts := time.Date(2026, 1, 2, 3, 4, 5, 123456789, time.UTC) // nanosecond precision
+	e := db.LedgerEntry{SeqNum: 1, Timestamp: ts, Agent: "a", Tool: "t",
+		Decision: "allow", PolicyRule: "r", PayloadHash: "p", PrevHash: ""}
+	h1 := calculateHash(e)
+	e.Timestamp = e.Timestamp.Truncate(time.Microsecond) // simulate Postgres roundtrip
+	h2 := calculateHash(e)
+	if h1 != h2 {
+		t.Fatalf("hash not stable across microsecond truncation")
+	}
+}
+
+func TestCalculateHash_CoversPolicyRule(t *testing.T) {
+	e := db.LedgerEntry{SeqNum: 1, Timestamp: time.Now(), Agent: "a", Tool: "t",
+		Decision: "allow", PolicyRule: "rule_a", PayloadHash: "p"}
+	h1 := calculateHash(e)
+	e.PolicyRule = "rule_b"
+	if calculateHash(e) == h1 {
+		t.Fatalf("tampering with PolicyRule is undetectable")
+	}
 }
