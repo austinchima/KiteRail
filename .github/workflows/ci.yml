@@ -44,9 +44,11 @@ jobs:
         run: go mod download
 
       - name: Set up sqlc
-        uses: sqlc-dev/setup-sqlc@v4
-        with:
-          sqlc-version: 'v1.31.1'
+        run: |
+          curl -fsSL -o /tmp/sqlc.tar.gz https://github.com/sqlc-dev/sqlc/releases/download/v1.31.1/sqlc_1.31.1_linux_amd64.tar.gz
+          tar -xzf /tmp/sqlc.tar.gz -C /tmp
+          sudo install -m 0755 /tmp/sqlc /usr/local/bin/sqlc
+          sqlc version
 
       - name: Verify generated DB code is fresh
         run: |
