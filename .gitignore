@@ -34,6 +34,7 @@ web/
 # Build artifacts
 backend/server.exe
 dist/
+*.zip
 
 # Scratch / local tooling output
 graphify-out/
