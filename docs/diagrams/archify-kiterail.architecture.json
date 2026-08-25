@@ -1,0 +1,159 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "KiteRail Verified Runtime Flow",
+    "output": "docs/diagrams/architecture-interactive.html",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/austinchima/KiteRail.git",
+      "revision": "f78fb45abb805aa87266e43dc21e64719e6d7210"
+    }
+  },
+  "components": [
+    {
+      "id": "agent",
+      "type": "external",
+      "label": "Autonomous AI Agent",
+      "sublabel": "JSON-RPC / MCP caller",
+      "pos": [40, 260],
+      "size": [150, 64],
+      "sources": [{ "path": "README.md", "label": "Agent plane" }]
+    },
+    {
+      "id": "ingress",
+      "type": "security",
+      "label": "HTTP Middleware",
+      "sublabel": "metrics · CORS · bearer auth",
+      "pos": [300, 250],
+      "size": [185, 84],
+      "sources": [{ "path": "backend/cmd/server/main.go", "label": "Middleware wiring" }]
+    },
+    {
+      "id": "proxy",
+      "type": "backend",
+      "label": "MCP Interceptor",
+      "sublabel": "validate · evaluate · route",
+      "pos": [650, 250],
+      "size": [170, 84],
+      "tag": "Go",
+      "sources": [{ "path": "backend/internal/proxy/proxy.go", "label": "Inline request path" }]
+    },
+    {
+      "id": "opa",
+      "type": "security",
+      "label": "OPA Policy Engine",
+      "sublabel": "compiled Rego · RWMutex",
+      "pos": [960, 140],
+      "size": [180, 76],
+      "tag": "Rego",
+      "sources": [{ "path": "backend/internal/opaengine/engine.go", "label": "Policy evaluation" }]
+    },
+    {
+      "id": "human-api",
+      "type": "backend",
+      "label": "Reviewer/Admin REST API",
+      "sublabel": "HITL · audit · policy simulation",
+      "pos": [620, 30],
+      "size": [210, 92],
+      "sources": [
+        { "path": "backend/cmd/server/main.go", "label": "Guarded API routes" },
+        { "path": "backend/internal/policystore/handler.go", "label": "Policy simulation" }
+      ]
+    },
+    {
+      "id": "policy-store",
+      "type": "database",
+      "label": "Policy Store",
+      "sublabel": "immutable Rego files",
+      "pos": [960, 30],
+      "size": [180, 76],
+      "sources": [{ "path": "backend/internal/policystore/store.go", "label": "Filesystem store" }]
+    },
+    {
+      "id": "worker",
+      "type": "backend",
+      "label": "Durable Replay Worker",
+      "sublabel": "replay · retry · audit",
+      "pos": [1100, 430],
+      "size": [210, 92]
+    },
+    {
+      "id": "ledger",
+      "type": "database",
+      "label": "Audit Ledger",
+      "sublabel": "hash-chain · serial retry ×3",
+      "pos": [580, 430],
+      "size": [190, 90],
+      "sources": [{ "path": "backend/internal/ledger/ledger.go", "label": "Tamper-evident ledger" }]
+    },
+    {
+      "id": "quarantine",
+      "type": "database",
+      "label": "Quarantine Store",
+      "sublabel": "payload + replay state",
+      "pos": [810, 430],
+      "size": [210, 90],
+      "sources": [
+        { "path": "backend/internal/quarantine/store.go", "label": "State transitions" },
+        { "path": "backend/internal/db/querier.go", "label": "Atomic claims" }
+      ]
+    },
+    {
+      "id": "dashboard",
+      "type": "frontend",
+      "label": "React Dashboard",
+      "sublabel": "HITL inbox · ledger",
+      "pos": [330, 600],
+      "size": [190, 80],
+      "tag": "React"
+    },
+    {
+      "id": "reviewer",
+      "type": "external",
+      "label": "Human Reviewer",
+      "sublabel": "approve · deny",
+      "pos": [40, 600],
+      "size": [170, 76]
+    },
+    {
+      "id": "target",
+      "type": "external",
+      "label": "Downstream API",
+      "sublabel": "downstream service",
+      "pos": [1115, 250],
+      "size": [180, 74],
+      "sources": [
+        { "path": "backend/internal/proxy/proxy.go", "label": "Allow forwarding" },
+        { "path": "docker-compose.yml", "label": "Local echo target" }
+      ]
+    }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "Agent Plane", "wraps": ["agent"], "pad": 18 },
+    { "kind": "security-group", "label": "Ingress Middleware", "wraps": ["ingress"], "pad": 18 },
+    { "kind": "security-group", "label": "Control Plane · Request + Review", "wraps": ["proxy", "opa", "human-api", "policy-store"], "pad": 18 },
+    { "kind": "security-group", "label": "Control Plane · Replay", "wraps": ["worker"], "pad": 18 },
+    { "kind": "region", "label": "Data Plane · PostgreSQL", "wraps": ["ledger", "quarantine"], "pad": 18 },
+    { "kind": "region", "label": "Human Plane", "wraps": ["dashboard", "reviewer"], "pad": 18 },
+    { "kind": "region", "label": "Target Plane", "wraps": ["target"], "pad": 18 }
+  ],
+  "connections": [
+    { "id": "agent-to-ingress", "from": "agent", "to": "ingress", "label": "JSON-RPC / MCP", "variant": "emphasis" },
+    { "id": "dashboard-to-ingress", "from": "dashboard", "to": "ingress", "label": "reviewer/admin REST request", "fromSide": "right", "toSide": "right", "via": [[550, 640], [550, 292]], "labelAt": [490, 400] },
+    { "id": "ingress-to-proxy", "from": "ingress", "to": "proxy", "label": "POST / · agent route", "labelAt": [550, 240] },
+    { "id": "ingress-to-human-api", "from": "ingress", "to": "human-api", "label": "/api/v1/* · human route + role guard", "variant": "security", "fromSide": "top", "toSide": "bottom", "via": [[392.5, 190], [725, 190]] },
+    { "id": "proxy-to-opa", "from": "proxy", "to": "opa", "label": "EvalInput", "fromSide": "top", "toSide": "bottom", "via": [[735, 230], [1050, 230]], "labelAt": [1020, 233] },
+    { "id": "opa-to-proxy", "from": "opa", "to": "proxy", "label": "Decision · allow / deny / quarantine", "fromSide": "left", "toSide": "left", "via": [[900, 178], [900, 210], [620, 210], [620, 292]], "labelAt": [750, 220] },
+    { "id": "human-api-to-opa", "from": "human-api", "to": "opa", "label": "dry-run EvalInput" },
+    { "id": "policy-store-to-opa", "from": "policy-store", "to": "opa", "label": "load + compile at startup", "variant": "dashed", "labelAt": [1050, 123] },
+    { "id": "human-api-to-policy-store", "from": "human-api", "to": "policy-store", "label": "list policies", "variant": "dashed" },
+    { "id": "proxy-to-ledger", "from": "proxy", "to": "ledger", "label": "append decision before routing · fail closed", "variant": "emphasis", "fromSide": "bottom", "toSide": "top", "via": [[735, 390], [675, 390]], "labelAt": [675, 540] },
+    { "id": "proxy-to-target", "from": "proxy", "to": "target", "label": "ALLOW · forward", "variant": "emphasis" },
+    { "id": "proxy-to-quarantine", "from": "proxy", "to": "quarantine", "label": "QUARANTINE · create pending item", "fromSide": "bottom", "toSide": "left", "labelAt": [900, 370] },
+    { "id": "human-api-to-quarantine", "from": "human-api", "to": "quarantine", "label": "list + approve / deny", "fromSide": "left", "toSide": "bottom", "via": [[570, 76], [570, 0], [1330, 0], [1330, 560], [915, 560]], "labelAt": [855, 550] },
+    { "id": "worker-to-quarantine", "from": "worker", "to": "quarantine", "label": "claim / status", "fromSide": "left", "toSide": "right", "labelAt": [1060, 400] },
+    { "id": "worker-to-target", "from": "worker", "to": "target", "label": "replay approved payload · Idempotency-Key", "variant": "emphasis", "fromSide": "top", "toSide": "bottom", "labelAt": [1210, 365] },
+    { "id": "reviewer-to-dashboard", "from": "reviewer", "to": "dashboard", "label": "review interaction" }
+  ]
+}

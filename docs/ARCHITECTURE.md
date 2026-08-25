@@ -38,13 +38,13 @@ flowchart TB
 
     subgraph Ingress["🔐 Ingress Middleware"]
         direction LR
-        M1[CORS Middleware] --> M2[Bearer Auth<br/>KITERAIL_API_KEYS]
+        M1[CORS Middleware] --> M2[Bearer Auth<br/>role-based trust domains]
     end
 
     subgraph Control["⚙️ Control Plane · KiteRail Proxy"]
         direction TB
         P[MCP Interceptor<br/>parses tools/call<br/>extracts name + arguments]
-        E[[OPA Policy Engine<br/>Rego evaluator<br/>hot-reload, RWMutex]]
+        E[[OPA Policy Engine<br/>Rego evaluator<br/>reload-on-demand, RWMutex]]
         SIM[/Policy Simulator<br/>dry-run endpoint/]
         PS[(Policy Store<br/>./policies/*.rego)]
         P --> E
@@ -149,7 +149,7 @@ Every arrow in this diagram maps to a function call in [`internal/proxy/proxy.go
 
 ### A note on ordering
 
-The audit ledger is written **before** the routing decision is executed (step 8, before the `alt` block). This is intentional: if the proxy crashes between "decide" and "route," the auditor still knows what would have happened. A compliance product where the audit log can lag the action is not a compliance product.
+The audit ledger is written **before** the routing decision is executed (step 8, before the `alt` block). This is intentional: if the proxy crashes between "decide" and "route," the auditor still knows what would have happened. A compliance product where the audit log can lag the action is not a compliance product. The guarantee is bidirectional — if the ledger write *fails*, the request is refused with `503` and never reaches the target. Allowed requests never execute unaudited.
 
 ---
 
@@ -221,7 +221,7 @@ Every ledger entry stores `hash = SHA256(prev_hash || entry_data)`. Two concurre
 
 This is documented in the [v1.0 CHANGELOG](../CHANGELOG.md#100---2026-08-01) because the previous version had a silent bug here. It's the kind of correctness issue only visible under real concurrent load; catching it in v0.2 → v1.0 was the last thing standing between "prototype" and "shippable."
 
-### 2. OPA engine hot-reload race
+### 2. OPA engine reload-on-demand race
 
 `Evaluate()` and `Reload()` both touch the compiled Rego module set. A `sync.RWMutex` guards them: readers (evaluators) don't block each other, but a reload (writer) waits for in-flight evaluations to finish before swapping the module set atomically.
 
@@ -231,7 +231,23 @@ This is documented in the [v1.0 CHANGELOG](../CHANGELOG.md#100---2026-08-01) bec
 
 ### 4. Conflict-safe quarantine resolution
 
-`Approve()` and `Deny()` both use `WHERE status = 'pending'` and check `RowsAffected`. If two reviewers hit approve simultaneously, exactly one succeeds; the other receives `409 Conflict`. The winning caller's approval is then replayed to the target. This prevents double-spend and double-replay of the same payload.
+`Approve()` and `Deny()` both use `WHERE status IN ('pending', 'replay_failed')` and check `RowsAffected`. If two reviewers hit approve simultaneously, exactly one succeeds; the other receives `409 Conflict`. This prevents double-spend and double-resolution of the same payload.
+
+### 5. Durable, idempotent replay
+
+Replay is owned by a background worker with all state in Postgres:
+
+```
+pending → approved → replaying → replayed
+                   |            └→ replay_failed → approved (re-approve)
+pending → denied
+```
+
+Claims are atomic (`UPDATE ... WHERE status = 'approved' ... FOR UPDATE SKIP LOCKED`), so multiple server instances can run workers without double-replaying. Every replay carries `Idempotency-Key: kiterail-quarantine-<id>`, stable across retries *and* crash recoveries. On startup, entries stuck in `replaying` from a previous crash are returned to `approved` — approved work is never lost.
+
+### 6. Separated trust domains
+
+Agents, reviewers, and admins hold distinct token sets (`api_keys`, `reviewer_api_keys`, `admin_api_keys`). Agents can only reach the proxy; approve/deny, ledger reads, and the dashboard require a reviewer or admin identity — which is also the only source of `resolved_by` on HITL decisions (body-supplied identities are ignored). Duplicate tokens across domains are rejected at startup.
 
 ---
 
@@ -272,7 +288,7 @@ Implement `proxy.EventPublisher`. v1.0 ships with a `NoOpPublisher` (audit event
 
 ### Add a new vertical (DevOps, healthcare, HR)
 
-No code changes. Write Rego. Example: quarantine any `kubectl` operation on a `production` namespace, or block any EHR read where the accessing agent lacks a BAA claim on their token. Policies live in `./policies/<vertical>/*.rego` and are hot-reloaded.
+No code changes. Write Rego. Example: quarantine any `kubectl` operation on a `production` namespace, or block any EHR read where the accessing agent lacks a BAA claim on their token. Policies live in `./policies/<vertical>/*.rego` and are reloaded on-demand via the policy API.
 
 ---
 
