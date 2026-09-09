@@ -6,73 +6,25 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"testing"
 
 	"github.com/austinchima/kiterail/internal/db"
+	"github.com/austinchima/kiterail/internal/dbtest"
 	"github.com/austinchima/kiterail/internal/ledger"
 	"github.com/austinchima/kiterail/internal/quarantine"
-	_ "github.com/lib/pq"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
 
-const integrationDBLockKey int64 = 4242420427
-
-func dashboardTestDSN() string {
-	if dsn := os.Getenv("KITERAIL_POSTGRES_DSN"); dsn != "" {
-		return dsn
-	}
-	return os.Getenv("DASHBOARDTEST_DSN")
-}
-
 func openIntegrationDB(t *testing.T) *sql.DB {
 	t.Helper()
-	dsn := dashboardTestDSN()
-	if dsn == "" {
-		t.Skip("KITERAIL_POSTGRES_DSN or DASHBOARDTEST_DSN not set")
-	}
-
-	ctx := context.Background()
-	lockDB, err := sql.Open("postgres", dsn)
-	require.NoError(t, err)
-	lockDB.SetMaxOpenConns(1)
-	lockDB.SetMaxIdleConns(1)
-	if err := lockDB.PingContext(ctx); err != nil {
-		lockDB.Close()
-		t.Fatalf("cannot connect to PostgreSQL: %v", err)
-	}
-	_, err = lockDB.ExecContext(ctx, "SELECT pg_advisory_lock($1)", integrationDBLockKey)
-	require.NoError(t, err)
-
-	sqlDB, err := sql.Open("postgres", dsn)
-	require.NoError(t, err)
-	if err := sqlDB.PingContext(ctx); err != nil {
-		sqlDB.Close()
-		_, _ = lockDB.ExecContext(ctx, "SELECT pg_advisory_unlock($1)", integrationDBLockKey)
-		lockDB.Close()
-		t.Fatalf("cannot connect to PostgreSQL: %v", err)
-	}
-	if err := db.Migrate(ctx, sqlDB); err != nil {
-		sqlDB.Close()
-		_, _ = lockDB.ExecContext(ctx, "SELECT pg_advisory_unlock($1)", integrationDBLockKey)
-		lockDB.Close()
-		t.Fatalf("cannot apply migrations: %v", err)
-	}
-	t.Cleanup(func() {
-		sqlDB.Close()
-		_, _ = lockDB.ExecContext(context.Background(), "SELECT pg_advisory_unlock($1)", integrationDBLockKey)
-		lockDB.Close()
-	})
-
-	return sqlDB
+	return dbtest.Open(t)
 }
 
 func resetDashboardTables(t *testing.T, sqlDB *sql.DB) {
 	t.Helper()
-	_, err := sqlDB.ExecContext(context.Background(), "TRUNCATE ledger, quarantine RESTART IDENTITY")
-	require.NoError(t, err)
+	dbtest.Reset(t, sqlDB, "ledger", "quarantine")
 }
 
 // TestIntegration_ComplianceStatus tests the compliance status calculation
@@ -102,7 +54,7 @@ func TestIntegration_ComplianceStatus(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	_, err = quarantineStore.Create(context.Background(), "agent_3", "tool_c", []byte(`{"requires":"review"}`))
+	_, err = quarantineStore.Create(context.Background(), "agent_3", "tool_c", []byte(`{"requires":"review"}`), nil)
 	require.NoError(t, err)
 
 	handler := NewHandler(ledgerStore, quarantineStore, zap.NewNop())

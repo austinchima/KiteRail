@@ -33,7 +33,6 @@ func TestLoad_Defaults(t *testing.T) {
 
 	assert.Equal(t, ":8080", cfg.ListenAddr)
 	assert.Equal(t, "./policies", cfg.PolicyDir)
-	assert.Equal(t, "nats://localhost:4222", cfg.NatsURL)
 	assert.Equal(t, "postgres://kiterail:kiterail@localhost:5432/kiterail?sslmode=disable", cfg.PostgresDSN)
 	assert.Equal(t, "info", cfg.LogLevel)
 	assert.Empty(t, cfg.APIKeys)
@@ -71,6 +70,7 @@ func TestValidate_ProductionRejectsDevCredentials(t *testing.T) {
 	cfg.PostgresDSN = "postgres://kiterail:kiterail@localhost:5432/kiterail?sslmode=disable"
 	cfg.APIKeys = map[string]string{"sk_dev_123": "agent-1"}
 	cfg.ReviewerAPIKeys = map[string]string{"rvw": "jane"}
+	cfg.AllowedOrigins = []string{"https://console.example.com"}
 	cfg.TLSCertFile = "/certs/tls.crt"
 	cfg.TLSKeyFile = "/certs/tls.key"
 
@@ -82,13 +82,29 @@ func TestValidate_ProductionRejectsDevCredentials(t *testing.T) {
 	assert.NoError(t, cfg.Validate())
 }
 
+func TestValidate_ProductionRejectsWildcardOriginsAndTooSmallPool(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.Environment = "production"
+	cfg.TargetURL = "https://upstream.example.com"
+	cfg.PostgresDSN = "postgres://prod@db/prod?sslmode=require"
+	cfg.APIKeys = map[string]string{"live-agent": "agent-1"}
+	cfg.ReviewerAPIKeys = map[string]string{"reviewer": "jane"}
+	cfg.TLSCertFile = "/certs/tls.crt"
+	cfg.TLSKeyFile = "/certs/tls.key"
+
+	require.ErrorContains(t, cfg.Validate(), "wildcard allowed_origins")
+
+	cfg.AllowedOrigins = []string{"https://console.example.com"}
+	cfg.PGMaxOpenConns = 1
+	require.ErrorContains(t, cfg.Validate(), "at least 2")
+}
+
 func TestLoad_EnvVars(t *testing.T) {
 	clearKiteRailEnv(t)
 
 	os.Setenv("KITERAIL_LISTEN_ADDR", ":9090")
 	os.Setenv("KITERAIL_TARGET_URL", "http://example.com")
 	os.Setenv("KITERAIL_POLICY_DIR", "/custom/policies")
-	os.Setenv("KITERAIL_NATS_URL", "nats://remote:4222")
 	os.Setenv("KITERAIL_POSTGRES_DSN", "postgres://user:pass@remote/db")
 	os.Setenv("KITERAIL_LOG_LEVEL", "debug")
 	os.Setenv("KITERAIL_API_KEYS", "key1:val1,key2:val2")
@@ -100,7 +116,6 @@ func TestLoad_EnvVars(t *testing.T) {
 	assert.Equal(t, ":9090", cfg.ListenAddr)
 	assert.Equal(t, "http://example.com", cfg.TargetURL)
 	assert.Equal(t, "/custom/policies", cfg.PolicyDir)
-	assert.Equal(t, "nats://remote:4222", cfg.NatsURL)
 	assert.Equal(t, "postgres://user:pass@remote/db", cfg.PostgresDSN)
 	assert.Equal(t, "debug", cfg.LogLevel)
 
@@ -118,7 +133,6 @@ func TestLoad_YAML(t *testing.T) {
 listen_addr: ":8081"
 target_url: "http://yaml.com"
 policy_dir: "/yaml/policies"
-nats_url: "nats://yaml:4222"
 postgres_dsn: "postgres://yaml/db"
 log_level: "warn"
 api_keys:
@@ -134,7 +148,6 @@ reviewer_api_keys:
 	assert.Equal(t, ":8081", cfg.ListenAddr)
 	assert.Equal(t, "http://yaml.com", cfg.TargetURL)
 	assert.Equal(t, "/yaml/policies", cfg.PolicyDir)
-	assert.Equal(t, "nats://yaml:4222", cfg.NatsURL)
 	assert.Equal(t, "postgres://yaml/db", cfg.PostgresDSN)
 	assert.Equal(t, "warn", cfg.LogLevel)
 

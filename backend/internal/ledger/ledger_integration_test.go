@@ -3,76 +3,25 @@ package ledger
 import (
 	"context"
 	"database/sql"
-	"os"
 	"sync"
 	"testing"
 
 	"github.com/austinchima/kiterail/internal/db"
-	_ "github.com/lib/pq"
+	"github.com/austinchima/kiterail/internal/dbtest"
 	"github.com/stretchr/testify/require"
 )
 
-const integrationDBLockKey int64 = 4242420427
-
 func openTestDB(t *testing.T) *sql.DB {
-	dsn := os.Getenv("KITERAIL_POSTGRES_DSN")
-	if dsn == "" {
-		t.Skip("KITERAIL_POSTGRES_DSN not set")
-	}
-
-	ctx := context.Background()
-	lockDB, err := sql.Open("postgres", dsn)
-	if err != nil {
-		t.Fatalf("failed to open DB: %v", err)
-	}
-	lockDB.SetMaxOpenConns(1)
-	lockDB.SetMaxIdleConns(1)
-	if err := lockDB.PingContext(ctx); err != nil {
-		lockDB.Close()
-		t.Fatalf("failed to ping DB: %v", err)
-	}
-	if _, err := lockDB.ExecContext(ctx, "SELECT pg_advisory_lock($1)", integrationDBLockKey); err != nil {
-		lockDB.Close()
-		t.Fatalf("failed to acquire DB test lock: %v", err)
-	}
-
-	dbConn, err := sql.Open("postgres", dsn)
-	if err != nil {
-		_, _ = lockDB.ExecContext(ctx, "SELECT pg_advisory_unlock($1)", integrationDBLockKey)
-		lockDB.Close()
-		t.Fatalf("failed to open DB: %v", err)
-	}
-	if err := dbConn.PingContext(ctx); err != nil {
-		dbConn.Close()
-		_, _ = lockDB.ExecContext(ctx, "SELECT pg_advisory_unlock($1)", integrationDBLockKey)
-		lockDB.Close()
-		t.Fatalf("failed to ping DB: %v", err)
-	}
-	if err := db.Migrate(ctx, dbConn); err != nil {
-		dbConn.Close()
-		_, _ = lockDB.ExecContext(ctx, "SELECT pg_advisory_unlock($1)", integrationDBLockKey)
-		lockDB.Close()
-		t.Fatalf("failed to apply migrations: %v", err)
-	}
-	t.Cleanup(func() {
-		dbConn.Close()
-		_, _ = lockDB.ExecContext(context.Background(), "SELECT pg_advisory_unlock($1)", integrationDBLockKey)
-		lockDB.Close()
-	})
-	return dbConn
+	return dbtest.Open(t)
 }
 
 func TestLedger_RoundtripWithVerify(t *testing.T) {
-	if os.Getenv("KITERAIL_POSTGRES_DSN") == "" {
-		t.Skip("KITERAIL_POSTGRES_DSN not set")
-	}
 	sqlDB := openTestDB(t)
 
 	store, err := New(sqlDB)
 	require.NoError(t, err)
 
-	_, err = sqlDB.ExecContext(context.Background(), "TRUNCATE ledger RESTART IDENTITY")
-	require.NoError(t, err)
+	dbtest.Reset(t, sqlDB, "ledger")
 
 	entries := []db.LedgerEntry{
 		{Agent: "agent_1", Tool: "tool_a", Decision: "allow", PolicyRule: "rule_a", PayloadHash: "hash_a"},
@@ -93,16 +42,12 @@ func TestLedger_RoundtripWithVerify(t *testing.T) {
 }
 
 func TestLedger_RequestID_SurvivesRoundTrip(t *testing.T) {
-	if os.Getenv("KITERAIL_POSTGRES_DSN") == "" {
-		t.Skip("KITERAIL_POSTGRES_DSN not set")
-	}
 	sqlDB := openTestDB(t)
 
 	store, err := New(sqlDB)
 	require.NoError(t, err)
 
-	_, err = sqlDB.ExecContext(context.Background(), "TRUNCATE ledger RESTART IDENTITY")
-	require.NoError(t, err)
+	dbtest.Reset(t, sqlDB, "ledger")
 
 	const wantRequestID = "mcp-request-42"
 	err = store.Append(context.Background(), db.LedgerEntry{
@@ -145,16 +90,12 @@ func TestLedger_RequestID_SurvivesRoundTrip(t *testing.T) {
 }
 
 func TestLedger_ConcurrentAppends_VerifyAndContiguousSeqNum(t *testing.T) {
-	if os.Getenv("KITERAIL_POSTGRES_DSN") == "" {
-		t.Skip("KITERAIL_POSTGRES_DSN not set")
-	}
 	sqlDB := openTestDB(t)
 
 	store, err := New(sqlDB)
 	require.NoError(t, err)
 
-	_, err = sqlDB.ExecContext(context.Background(), "TRUNCATE ledger RESTART IDENTITY")
-	require.NoError(t, err)
+	dbtest.Reset(t, sqlDB, "ledger")
 
 	const numGoroutines = 10
 	const entriesPerGoroutine = 5

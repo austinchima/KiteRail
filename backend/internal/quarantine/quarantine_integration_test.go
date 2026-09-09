@@ -3,70 +3,25 @@ package quarantine
 import (
 	"context"
 	"database/sql"
-	"os"
+	"net/http"
+	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
-	"github.com/austinchima/kiterail/internal/db"
-	_ "github.com/lib/pq"
+	"github.com/austinchima/kiterail/internal/dbtest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 )
-
-const integrationDBLockKey int64 = 4242420427
-
-func quarantineTestDSN() string {
-	if dsn := os.Getenv("KITERAIL_POSTGRES_DSN"); dsn != "" {
-		return dsn
-	}
-	return os.Getenv("QUARANTINE_TEST_DSN")
-}
 
 func openIntegrationDB(t *testing.T) *sql.DB {
 	t.Helper()
-	dsn := quarantineTestDSN()
-	if dsn == "" {
-		t.Skip("KITERAIL_POSTGRES_DSN or QUARANTINE_TEST_DSN not set")
-	}
-
-	ctx := context.Background()
-	lockDB, err := sql.Open("postgres", dsn)
-	require.NoError(t, err)
-	lockDB.SetMaxOpenConns(1)
-	lockDB.SetMaxIdleConns(1)
-	if err := lockDB.PingContext(ctx); err != nil {
-		lockDB.Close()
-		t.Fatalf("cannot connect to PostgreSQL: %v", err)
-	}
-	_, err = lockDB.ExecContext(ctx, "SELECT pg_advisory_lock($1)", integrationDBLockKey)
-	require.NoError(t, err)
-
-	sqlDB, err := sql.Open("postgres", dsn)
-	require.NoError(t, err)
-	if err := sqlDB.PingContext(ctx); err != nil {
-		sqlDB.Close()
-		_, _ = lockDB.ExecContext(ctx, "SELECT pg_advisory_unlock($1)", integrationDBLockKey)
-		lockDB.Close()
-		t.Fatalf("cannot connect to PostgreSQL: %v", err)
-	}
-	if err := db.Migrate(ctx, sqlDB); err != nil {
-		sqlDB.Close()
-		_, _ = lockDB.ExecContext(ctx, "SELECT pg_advisory_unlock($1)", integrationDBLockKey)
-		lockDB.Close()
-		t.Fatalf("cannot apply migrations: %v", err)
-	}
-	t.Cleanup(func() {
-		sqlDB.Close()
-		_, _ = lockDB.ExecContext(context.Background(), "SELECT pg_advisory_unlock($1)", integrationDBLockKey)
-		lockDB.Close()
-	})
-
-	return sqlDB
+	return dbtest.Open(t)
 }
 
 func resetQuarantineTable(t *testing.T, sqlDB *sql.DB) {
 	t.Helper()
-	_, err := sqlDB.ExecContext(context.Background(), "TRUNCATE quarantine")
-	require.NoError(t, err)
+	dbtest.Reset(t, sqlDB, "quarantine")
 }
 
 // TestIntegration_CreateAndRetrieve creates a quarantine entry via real PostgreSQL
@@ -77,7 +32,7 @@ func TestIntegration_CreateAndRetrieve(t *testing.T) {
 	require.NoError(t, err)
 	resetQuarantineTable(t, sqlDB)
 
-	id, err := store.Create(context.Background(), "agent_1", "tool_x", []byte(`{"data": "test"}`))
+	id, err := store.Create(context.Background(), "agent_1", "tool_x", []byte(`{"data": "test"}`), nil)
 	require.NoError(t, err)
 	assert.NotEmpty(t, id)
 
@@ -97,9 +52,9 @@ func TestIntegration_ListByStatus(t *testing.T) {
 	require.NoError(t, err)
 	resetQuarantineTable(t, sqlDB)
 
-	_, err = store.Create(context.Background(), "agent_2", "tool_y", []byte(`{"data": "test2"}`))
+	_, err = store.Create(context.Background(), "agent_2", "tool_y", []byte(`{"data": "test2"}`), nil)
 	require.NoError(t, err)
-	_, err = store.Create(context.Background(), "agent_3", "tool_z", []byte(`{"data": "test3"}`))
+	_, err = store.Create(context.Background(), "agent_3", "tool_z", []byte(`{"data": "test3"}`), nil)
 	require.NoError(t, err)
 
 	entries, err := store.List(context.Background(), "pending")
@@ -117,7 +72,7 @@ func TestIntegration_ApproveAndDeny(t *testing.T) {
 	require.NoError(t, err)
 	resetQuarantineTable(t, sqlDB)
 
-	id, err := store.Create(context.Background(), "agent_1", "tool_x", []byte(`{"data": "test"}`))
+	id, err := store.Create(context.Background(), "agent_1", "tool_x", []byte(`{"data": "test"}`), nil)
 	require.NoError(t, err)
 
 	err = store.Approve(context.Background(), id, "admin")
@@ -129,7 +84,7 @@ func TestIntegration_ApproveAndDeny(t *testing.T) {
 	assert.Equal(t, "admin", entry.ResolvedBy)
 	assert.True(t, entry.ResolvedAt.Valid)
 
-	id2, err := store.Create(context.Background(), "agent_2", "tool_y", []byte(`{"data": "test2"}`))
+	id2, err := store.Create(context.Background(), "agent_2", "tool_y", []byte(`{"data": "test2"}`), nil)
 	require.NoError(t, err)
 
 	err = store.Deny(context.Background(), id2, "admin", "violation")
@@ -144,4 +99,59 @@ func TestIntegration_ApproveAndDeny(t *testing.T) {
 	err = sqlDB.QueryRowContext(context.Background(), "SELECT reason FROM quarantine WHERE id = $1", id2).Scan(&reason)
 	require.NoError(t, err)
 	assert.Equal(t, "violation", reason)
+}
+
+// TestIntegration_ReplayExhaustionSurfacesReplayFailed drives the replay
+// state machine end-to-end against real PostgreSQL — create → approve →
+// claim → upstream failure — until attempts exhaust, and asserts the row
+// lands in 'replay_failed' where a reviewer can see it.
+//
+// This is the regression net for the live bug where MarkReplayFailed's SQL
+// guard required status='approved' while the worker held the entry in
+// 'replaying': the UPDATE silently matched zero rows (:exec swallowed the
+// no-op), so exhausted entries stayed 'replaying' forever and startup
+// recovery re-approved them into an infinite retry loop. Every unit test
+// missed it because the mock store's semantics diverged from the real SQL —
+// a state machine must be integration-tested against the database that owns
+// it.
+func TestIntegration_ReplayExhaustionSurfacesReplayFailed(t *testing.T) {
+	sqlDB := openIntegrationDB(t)
+	store, err := New(sqlDB)
+	require.NoError(t, err)
+	resetQuarantineTable(t, sqlDB)
+
+	var upstreamCalls atomic.Int32
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamCalls.Add(1)
+		w.WriteHeader(http.StatusInternalServerError) // poisoned upstream: every replay fails
+	}))
+	defer target.Close()
+
+	ctx := context.Background()
+	id, err := store.Create(ctx, "agent_1", "tool_x", []byte(`{"data":"poison"}`), nil)
+	require.NoError(t, err)
+	require.NoError(t, store.Approve(ctx, id, "reviewer-jane"))
+
+	// Each drainOnce is one production tick (claim approved entries, replay
+	// them) minus the timer. The real SQL increments attempts on release
+	// (ReturnToApproved), not at claim, so exhaustion takes
+	// defaultMaxReplayAttempts+1 rounds: attempts 0,1,2 fail and release; the
+	// round that reads attempts==3 parks the entry as replay_failed.
+	wk := NewWorker(store, nil, zap.NewNop(), target.URL)
+	const exhaustDrains = defaultMaxReplayAttempts + 1
+	for drain := 0; drain < exhaustDrains; drain++ {
+		wk.drainOnce(ctx)
+	}
+
+	entry, err := store.Get(ctx, id)
+	require.NoError(t, err)
+	assert.Equal(t, StatusReplayFailed, entry.Status,
+		"exhausted replays must surface as replay_failed, not wedge in 'replaying'")
+	assert.Equal(t, int32(exhaustDrains), upstreamCalls.Load(),
+		"the worker must stop calling the poisoned upstream once attempts exhaust")
+
+	// A replay_failed entry must not be re-claimed by the worker.
+	wk.drainOnce(ctx)
+	assert.Equal(t, int32(exhaustDrains), upstreamCalls.Load(),
+		"replay_failed entries must not be retried")
 }

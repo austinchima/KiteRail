@@ -55,79 +55,22 @@ func TestList(t *testing.T) {
 	assert.False(t, policy2.Enabled)
 }
 
-func TestUpdateEnabled(t *testing.T) {
+func TestListRecursivelySortsPoliciesByRelativePath(t *testing.T) {
 	tmpDir := t.TempDir()
-
-	// Create enabled policy
-	enabledPath := filepath.Join(tmpDir, "policy1.rego")
-	require.NoError(t, os.WriteFile(enabledPath, []byte(`# Title: Policy One`), 0644))
+	nested := filepath.Join(tmpDir, "payments")
+	require.NoError(t, os.MkdirAll(nested, 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(nested, "refund.rego"), []byte("# nested"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "access.rego.disabled"), []byte("# disabled"), 0644))
 
 	store, err := New(tmpDir)
 	require.NoError(t, err)
-
-	// Disable it
-	err = store.UpdateEnabled(context.Background(), "policy1", false)
+	policies, err := store.List(context.Background())
 	require.NoError(t, err)
-
-	// Check it's now disabled
-	disabledPath := filepath.Join(tmpDir, "policy1.rego.disabled")
-	if _, err := os.Stat(disabledPath); err != nil {
-		t.Fatalf("expected disabled file to exist: %v", err)
-	}
-	if _, err := os.Stat(enabledPath); err == nil {
-		t.Fatal("expected enabled file to be removed")
-	}
-
-	// Re-enable it
-	err = store.UpdateEnabled(context.Background(), "policy1", true)
-	require.NoError(t, err)
-
-	// Check it's enabled again
-	reEnabledPath := filepath.Join(tmpDir, "policy1.rego")
-	if _, err := os.Stat(reEnabledPath); err != nil {
-		t.Fatalf("expected enabled file to exist: %v", err)
-	}
-	if _, err := os.Stat(disabledPath); err == nil {
-		t.Fatal("expected disabled file to be removed")
-	}
-}
-
-func TestSave(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	store, err := New(tmpDir)
-	require.NoError(t, err)
-
-	// Save an enabled policy
-	err = store.Save(context.Background(), "policy1", "# Title: Saved Policy\n# Trigger: test\n# Action: allow", true)
-	require.NoError(t, err)
-
-	enabledPath := filepath.Join(tmpDir, "policy1.rego")
-	if _, err := os.Stat(enabledPath); err != nil {
-		t.Fatalf("expected enabled file to exist: %v", err)
-	}
-
-	content, err := os.ReadFile(enabledPath)
-	require.NoError(t, err)
-	assert.Equal(t, "# Title: Saved Policy\n# Trigger: test\n# Action: allow", string(content))
-
-	// Save the same policy as disabled
-	err = store.Save(context.Background(), "policy1", "# Disabled policy code", false)
-	require.NoError(t, err)
-
-	disabledPath := filepath.Join(tmpDir, "policy1.rego.disabled")
-	if _, err := os.Stat(disabledPath); err != nil {
-		t.Fatalf("expected disabled file to exist: %v", err)
-	}
-
-	content2, err := os.ReadFile(disabledPath)
-	require.NoError(t, err)
-	assert.Equal(t, "# Disabled policy code", string(content2))
-
-	// Check the enabled file is removed
-	if _, err := os.Stat(enabledPath); err == nil {
-		t.Fatal("expected enabled file to be removed")
-	}
+	require.Len(t, policies, 2)
+	assert.Equal(t, "access", policies[0].ID)
+	assert.False(t, policies[0].Enabled)
+	assert.Equal(t, "payments/refund", policies[1].ID)
+	assert.True(t, policies[1].Enabled)
 }
 
 func TestParseMetadata(t *testing.T) {
@@ -158,15 +101,4 @@ func TestParseMetadata_Empty(t *testing.T) {
 	assert.Equal(t, "", title)
 	assert.Equal(t, "", trigger)
 	assert.Equal(t, "", action)
-}
-
-func FileExists(t *testing.T, path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
-}
-
-func NotFileExists(t *testing.T, path string) bool {
-	_, err := os.Stat(path)
-	assert.Error(t, err)
-	return false
 }

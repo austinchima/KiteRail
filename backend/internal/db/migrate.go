@@ -6,6 +6,7 @@ import (
 	"embed"
 	"fmt"
 	"io/fs"
+	"path"
 	"sort"
 
 	_ "github.com/lib/pq"
@@ -15,14 +16,20 @@ import (
 var migrationsFS embed.FS
 
 // Migrate applies all pending migrations in filename order. It uses a
-// Postgres advisory lock so concurrent server instances cannot race.
+// transaction-scoped Postgres advisory lock so concurrent instances cannot race.
+// Keeping the lock and all schema work in one transaction also guarantees that
+// cancellation releases the lock; pooled queries cannot unlock another session.
 func Migrate(ctx context.Context, sqlDB *sql.DB) error {
-	if _, err := sqlDB.ExecContext(ctx, "SELECT pg_advisory_lock(918273645)"); err != nil {
+	transaction, err := sqlDB.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin migration transaction: %w", err)
+	}
+	defer transaction.Rollback()
+	if _, err := transaction.ExecContext(ctx, "SELECT pg_advisory_xact_lock(918273645)"); err != nil {
 		return fmt.Errorf("failed to acquire migration lock: %w", err)
 	}
-	defer sqlDB.ExecContext(context.Background(), "SELECT pg_advisory_unlock(918273645)")
 
-	if _, err := sqlDB.ExecContext(ctx, `
+	if _, err := transaction.ExecContext(ctx, `
 		CREATE TABLE IF NOT EXISTS schema_migrations (
 			version TEXT PRIMARY KEY,
 			applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -37,7 +44,7 @@ func Migrate(ctx context.Context, sqlDB *sql.DB) error {
 	}
 	names := make([]string, 0, len(entries))
 	for _, e := range entries {
-		if !e.IsDir() && fileExt(e.Name()) == ".sql" {
+		if !e.IsDir() && path.Ext(e.Name()) == ".sql" {
 			names = append(names, e.Name())
 		}
 	}
@@ -45,7 +52,7 @@ func Migrate(ctx context.Context, sqlDB *sql.DB) error {
 
 	for _, name := range names {
 		var applied bool
-		if err := sqlDB.QueryRowContext(ctx,
+		if err := transaction.QueryRowContext(ctx,
 			"SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version = $1)", name,
 		).Scan(&applied); err != nil {
 			return fmt.Errorf("failed to check migration status for %s: %w", name, err)
@@ -58,31 +65,16 @@ func Migrate(ctx context.Context, sqlDB *sql.DB) error {
 		if err != nil {
 			return fmt.Errorf("failed to read migration %s: %w", name, err)
 		}
-		tx, err := sqlDB.BeginTx(ctx, nil)
-		if err != nil {
-			return fmt.Errorf("failed to begin tx for %s: %w", name, err)
-		}
-		if _, err := tx.ExecContext(ctx, string(content)); err != nil {
-			tx.Rollback()
+		if _, err := transaction.ExecContext(ctx, string(content)); err != nil {
 			return fmt.Errorf("failed to apply migration %s: %w", name, err)
 		}
-		if _, err := tx.ExecContext(ctx,
+		if _, err := transaction.ExecContext(ctx,
 			"INSERT INTO schema_migrations (version) VALUES ($1)", name); err != nil {
-			tx.Rollback()
 			return fmt.Errorf("failed to record migration %s: %w", name, err)
 		}
-		if err := tx.Commit(); err != nil {
-			return fmt.Errorf("failed to commit migration %s: %w", name, err)
-		}
+	}
+	if err := transaction.Commit(); err != nil {
+		return fmt.Errorf("failed to commit migrations: %w", err)
 	}
 	return nil
-}
-
-func fileExt(name string) string {
-	for i := len(name) - 1; i >= 0; i-- {
-		if name[i] == '.' {
-			return name[i:]
-		}
-	}
-	return ""
 }

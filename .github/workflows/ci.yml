@@ -52,19 +52,40 @@ jobs:
 
       - name: Verify generated DB code is fresh
         run: |
-          sqlc generate
-          git diff --exit-code -- internal/db
+          sqlc diff
+
+      - name: gofmt (must be clean; *.go is eol=lf per .gitattributes)
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.12.2
+          working-directory: backend
 
       - name: Vet
         run: go vet ./...
 
+      - name: govulncheck
+        uses: golang/govulncheck-action@v1
+        with:
+          go-version-file: backend/go.mod
+          work-dir: backend
+          go-package: ./...
+
       - name: Test
         env:
           KITERAIL_POSTGRES_DSN: postgres://kiterail:kiterail@localhost:5432/kiterail?sslmode=disable
-        run: go test -race -count=1 ./...
+        run: go test -race -count=1 -coverprofile=coverage.out ./...
 
       - name: Build
         run: go build -o /dev/null ./cmd/...
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: backend/coverage.out
 
   policy:
     name: Policy Check & Test

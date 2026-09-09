@@ -43,7 +43,7 @@ The mapped identity (`agent_id`, reviewer ID, admin ID) is what gets recorded in
 - All request bodies are `Content-Type: application/json`.
 - All response bodies are JSON unless otherwise noted.
 - Timestamps are RFC 3339 in UTC (e.g. `2026-08-01T14:32:11Z`).
-- IDs are opaque strings — don't parse them. Quarantine IDs are currently sequential integers (e.g. `1042`); do not rely on this — they may become UUIDs in a future release.
+- IDs are opaque strings — don't parse them. New quarantine IDs are UUIDs; integer IDs from pre-UUID databases are retained internally as `legacy_id` during migration.
 - Errors use the shape `{"error": "<human message>"}` and where applicable `{"error": "...", "explanation": "..."}`.
 
 ---
@@ -63,9 +63,9 @@ The mapped identity (`agent_id`, reviewer ID, admin ID) is what gets recorded in
 | `GET\|POST` | `/api/v1/ledger/verify` | reviewer/admin | Verify hash-chain integrity |
 | `GET` | `/api/v1/policies` | reviewer/admin | List loaded policies |
 | `POST` | `/api/v1/policies/simulate` | reviewer/admin | Dry-run any tool call against current policies |
-| `PATCH\|PUT\|POST` | `/api/v1/policies/:id` | — | **Disabled** (`405`) — policies are GitOps-immutable in v1.0 |
+| `PATCH\|PUT\|POST` | `/api/v1/policies/:id` | — | **Disabled** (`405`) — policies are GitOps-immutable in the stable release |
 | `GET` | `/api/v1/dashboard/stats` | reviewer/admin | Aggregate counts for the local UI |
-| `GET` | `/api/v1/topology/stream` | required | SSE — reserved for v1.1 (currently `501 Not Implemented`) |
+| `GET` | `/api/v1/topology/stream` | required | SSE — reserved for a future release (currently `501 Not Implemented`) |
 
 Per-agent rate limiting is enforced with a token bucket (`rate_limit_rps` / `rate_limit_burst`, defaults 10 rps / burst 20). Exceeding it returns `429 Too Many Requests`.
 
@@ -80,7 +80,7 @@ To understand how KiteRail's endpoints work together, here is a complete lifecyc
 3. **Proxy:** Returns `202 Accepted` to the agent with a `quarantine_id`. The request pauses here.
 4. **Human Reviewer:** Calls `GET /api/v1/quarantine` and sees the pending refund.
 5. **Human Reviewer:** Calls `POST /api/v1/quarantine/<id>/approve`.
-6. **Proxy:** Immediately responds `200 OK` with `{"status": "approved", "id": "..."}`. The durable replay worker claims the approved entry from Postgres (state: `replaying`) and POSTs the original payload to the target with a stable `Idempotency-Key`. On failure it retries while attempts remain; after 3 exhausted attempts it parks the item as `replay_failed` for re-approval. If the server crashes mid-replay, startup recovery returns the entry to `approved` — no approved work is ever lost.
+6. **Proxy:** Immediately responds `200 OK` with `{"status": "approved", "id": "..."}`. The durable replay worker claims the approved entry from Postgres (state: `replaying`) and POSTs the original payload to the target with a stable `Idempotency-Key`. One advisory-locked replay pass runs across replicas, so crash recovery cannot reset another live worker's claim. A failed entry is retried three times and the fourth failed call parks it as `replay_failed` for re-approval. If the server crashes mid-replay, the next locked pass returns the abandoned entry to `approved`.
 7. **Proxy:** Each replay outcome is recorded in the ledger with decisions `approved_replayed`, `replay_error`, or `replay_upstream_<code>`.
 
 ---
@@ -93,12 +93,14 @@ To understand how KiteRail's endpoints work together, here is a complete lifecyc
 ```json
 {
   "status": "ok",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "uptime_seconds": 1234.56
 }
 ```
 
-`/readyz` is the **readiness** probe: it returns `503 Service Unavailable` unless Postgres answers within 2 seconds. Orchestrators/load balancers should gate traffic on `/readyz`, not on health.
+`/readyz` is the **readiness** probe: it returns `503 Service Unavailable` unless Postgres answers within 2 seconds **and** the active OPA query contains KiteRail's authorization decision entry point. Orchestrators/load balancers should gate traffic on `/readyz`, not on health.
+
+During graceful shutdown the server flips readiness to `503` **before** beginning connection drain: the instant SIGTERM is received, `/readyz` starts returning `503` with body `{"ready": false, "draining": true}` while `/api/v1/health` stays `200` until the process exits. Protected routes reject new work with `503` during the configured `shutdown_drain_delay` (default 5 s); existing requests then receive the server's 10-second shutdown window. The HTTP server also enforces `ReadHeaderTimeout` (Slowloris defense; default 5 s, configurable via `read_header_timeout` in the YAML config).
 
 ---
 
@@ -111,11 +113,12 @@ This is the whole point of KiteRail. The ingress is **strict and fail closed** �
 1. Authenticated via agent bearer token.
 2. Method must be `POST`; anything else is rejected with `405`.
 3. Body is size-capped (`max_request_body_bytes`, default 1 MiB); oversized bodies get `413`.
-4. Parsed as JSON and validated as a JSON-RPC invocation: non-JSON, missing `method`/`params`, empty/non-string `method`, `tools/call` without a `params.name`, or non-object `params` are all rejected with `400`. **Nothing malformed is ever forwarded to the target or bypasses policy evaluation.**
-5. If `method == "tools/call"`, `params.name` becomes the tool name and `params.arguments` becomes the arguments object (per the MCP specification). For any other `method`, the method string itself is used as the tool name.
-6. Evaluated against the OPA policy engine. Policies contribute to a shared `decisions` set; the aggregator selects the most restrictive action (deny > quarantine > allow).
-7. Written to the audit ledger with a SHA-256 hash of the request body. **If the ledger write fails, the request is refused with `503` — allowed requests never execute unaudited.**
-8. Routed based on the decision.
+4. Parsed as JSON and validated as a **single** JSON-RPC 2.0 invocation per the 2026-07-28 MCP stateless profile: the body must be one JSON object with `jsonrpc: "2.0"`. Batches, client-sent responses (`result`/`error`), duplicate member names at any depth, non-UTF-8/non-JSON input, missing `method`/`params`, empty/non-string `method`, `tools/call` without a `params.name`, and non-object `params.arguments` are all rejected with `400` + JSON-RPC `-32600`. JSON numbers, including large JSON-RPC IDs, are retained without float64 rounding. **Nothing malformed is ever forwarded to the target or bypasses policy evaluation.**
+5. Mirrored MCP metadata is validated (see below): a contradiction between the `Mcp-Method` / `Mcp-Name` headers and the body is rejected with `400` + JSON-RPC `-32020` **before** policy evaluation — policy input is never attacker-spoofable via headers.
+6. If `method == "tools/call"`, `params.name` becomes the tool name and `params.arguments` becomes the arguments object (per the MCP specification). For any other `method`, the method string itself is used as the tool name.
+7. Evaluated against the OPA policy engine. Policies contribute to a shared `decisions` set; the aggregator selects the most restrictive action (deny > quarantine > allow). The engine input's `raw_method` is the JSON-RPC protocol method from the validated body (`"tools/call"`, or the actual method for other calls) — never the HTTP method, which is transport metadata.
+8. Written to the audit ledger with a SHA-256 hash of the request body. **If the ledger write fails, the request is refused with `503` — allowed requests never execute unaudited.**
+9. Routed based on the decision.
 
 **Request**
 ```bash
@@ -140,6 +143,29 @@ curl -X POST http://localhost:8080/ \
 | `allow` | Whatever the target API returns | Whatever the target API returns |
 | `deny` | `403 Forbidden` | `{"error": "Denied by policy", "explanation": "<rule text>"}` |
 | `quarantine` | `202 Accepted` | `{"quarantine_id": "<opaque-id>", "status": "quarantined"}` |
+
+**Mirrored MCP headers (2026-07-28 stateless profile)**
+
+KiteRail is a validating intermediary: the body is always the source of truth for policy, and mirrored headers are checked, never trusted blindly.
+
+| Header | Rule |
+|---|---|
+| `Mcp-Method` | When present, exactly one non-empty value MUST equal the body's `method`. Contradiction or duplication → `400` + `-32020`. Absent → tolerated for legacy clients; policy reads the body. |
+| `Mcp-Name` | When present, exactly one non-empty value is decoded from the case-sensitive `=?base64?<base64>?=` sentinel when used. It MUST equal `params.name` for `tools/call` and `prompts/get`, or `params.uri` for `resources/read`; it is rejected for other methods. |
+| `MCP-Protocol-Version` | Exactly one non-empty value is accepted and forwarded without enforcement. Version pinning is a deliberate post-MVP decision (see `docs/ARCHITECTURE.md`). |
+
+On allow, headers are **mirrored, never rewritten**: `Mcp-Method` / `Mcp-Name` / `MCP-Protocol-Version` arrive at the target exactly as the client sent them. On quarantine, only replay-safe protocol metadata (`Accept`, those MCP headers, and `Mcp-Param-*`) is retained; credentials, cookies, and connection headers are never persisted.
+
+**Error mapping (proxy-generated errors)**
+
+| Condition | HTTP | JSON-RPC code | Body shape |
+|---|---|---|---|
+| Non-POST, oversized body | `405` / `413` | `-32600` | spec error object (below) |
+| Envelope violation (non-JSON, batch array, client-sent response, missing/`!= "2.0"` `jsonrpc`, missing/invalid `method`/`params`) | `400` | `-32600` | `{"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"..."}}` |
+| Header/body contradiction (`Mcp-Method` / `Mcp-Name`) | `400` | `-32020` | same shape, `code: -32020` |
+| Policy `deny` | `403` | — | `{"error": "Denied by policy", "explanation": "<rule text>"}` |
+
+`-32600` is the JSON-RPC 2.0 standard *invalid request* code; `-32020` is reserved by the 2026-07-28 MCP spec for header/body disagreement. KiteRail's own codes, if any are ever added, stay inside the spec-reserved custom range `-32000..-32019`.
 
 **Notes**
 - The proxy transparently forwards the original request path, headers (minus the agent's Authorization header, which is stripped), and body when the decision is `allow`. Target URL is `KITERAIL_TARGET_URL`.
@@ -183,7 +209,7 @@ curl -H "Authorization: Bearer sk_reviewer_..." \
 Approve a quarantined item. **Reviewer/admin only.** KiteRail will:
 
 1. Mark the item `approved` in the database (conflict-safe — concurrent calls return `409`). The approver identity is taken from the **authenticated reviewer/admin token** — any `approved_by` value in the request body is ignored. The response is returned **immediately**.
-2. The durable replay worker claims the entry (`approved` → `replaying`) and POSTs the original payload verbatim to `KITERAIL_TARGET_URL` with a stable `Idempotency-Key: kiterail-quarantine-<id>` header, so tolerant upstreams can deduplicate retries and crash-recovery replays. Failed attempts return the entry to `approved` for another pass; after 3 exhausted attempts it transitions to `replay_failed`, reappearing in the reviewer inbox for manual re-approval.
+2. The durable replay worker claims the entry (`approved` → `replaying`) and POSTs the original payload verbatim to `KITERAIL_TARGET_URL` with a stable `Idempotency-Key: kiterail-quarantine-<id>` header, so tolerant upstreams can deduplicate retries and crash-recovery replays. One Postgres advisory lock owns each recovery-and-replay pass across replicas. Failed attempts return the entry to `approved` for another pass; after three retry releases, the fourth failed call transitions to `replay_failed`, reappearing in the reviewer inbox for manual re-approval. Redirect responses are failures and are never followed.
 3. Each replay outcome is recorded in the ledger with decisions: `approved_replayed` (success), `replay_error` (network/timeout failure), or `replay_upstream_<code>` (upstream HTTP error code).
 
 The replay sets the following headers on the upstream request so the target can identify the context:
@@ -221,12 +247,14 @@ A request body is not required; any supplied `approved_by` is ignored in favour 
 
 Reject a quarantined item. **Reviewer/admin only.** The original request is *not* replayed. The denial is written to the audit ledger with the authenticated reviewer identity.
 
-Accepts an optional JSON body:
+Accepts an optional JSON body (capped at 1 KiB):
 ```json
 {
   "reason": "Amount exceeds policy limit"
 }
 ```
+A malformed or over-limit body is rejected with `400 Bad Request` (`{"error": "invalid request body"}`) before anything is persisted. An empty body is valid and simply records no reason.
+
 The denying reviewer's identity always comes from their bearer token. `reason` is persisted to the quarantine row.
 
 **Request**
@@ -339,7 +367,7 @@ Dry-run any tool call against the current policy set *without* executing it. Thi
 }
 ```
 
-`agent` is optional — defaults to `"simulator"`. Simulations never touch the real agent identity or ledger.
+`tool` and `agent` are required so the simulated policy input is not silently different from production. The body is limited to 1 MiB, rejects duplicate JSON keys, and preserves numeric values. Simulations never touch the real agent identity or ledger.
 
 **Request**
 ```bash
@@ -348,7 +376,8 @@ curl -X POST -H "Authorization: Bearer sk_reviewer_..." \
   http://localhost:8080/api/v1/policies/simulate \
   -d '{
     "tool": "stripe.charge.refund",
-    "arguments": { "amount": 2500 }
+    "arguments": { "amount": 2500 },
+    "agent": "agent_alpha"
   }'
 ```
 
@@ -470,11 +499,11 @@ curl -X POST -H "Authorization: Bearer sk_reviewer_..." \
 
 ---
 
-## Reserved for v1.1
+## Reserved for a future release
 
 ### `GET /api/v1/topology/stream`
 
-Server-Sent Events stream of live proxy events for the dashboard's topology view. In v1.0 this endpoint returns `501 Not Implemented` — the dashboard falls back to a static simulation. Full streaming returns in v1.1 alongside the NATS JetStream re-integration.
+Server-Sent Events stream of live proxy events for the dashboard's topology view. In the stable release this endpoint returns `501 Not Implemented` — the dashboard falls back to a static simulation. Full streaming returns in a future release alongside the NATS JetStream re-integration.
 
 ---
 
