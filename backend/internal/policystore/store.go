@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -34,40 +35,43 @@ func New(policyDir string) (*Store, error) {
 	return &Store{policyDir: policyDir}, nil
 }
 
-// List returns all policies.
+// List returns every Rego policy below the configured root in deterministic
+// relative-path order. Recursive discovery matches OPA's loader, so the
+// dashboard cannot omit a policy merely because a team grouped it in a
+// subdirectory. Disabled files remain visible for reviewers but are marked
+// disabled and are not loaded by OPA.
 func (s *Store) List(ctx context.Context) ([]Policy, error) {
-	entries, err := os.ReadDir(s.policyDir)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read policy directory: %w", err)
-	}
-
-	var policies []Policy
-	for _, entry := range entries {
+	policies := make([]Policy, 0)
+	err := filepath.WalkDir(s.policyDir, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if entry.IsDir() {
-			continue
+			return nil
 		}
 
 		name := entry.Name()
 		if !strings.HasSuffix(name, ".rego") && !strings.HasSuffix(name, ".rego.disabled") {
-			continue
+			return nil
 		}
 
-		enabled := strings.HasSuffix(name, ".rego")
-		id := strings.TrimSuffix(name, ".rego.disabled")
-		id = strings.TrimSuffix(id, ".rego")
-
-		path := filepath.Join(s.policyDir, name)
 		info, err := entry.Info()
 		if err != nil {
-			continue
+			return fmt.Errorf("read policy metadata for %q: %w", path, err)
 		}
-
 		content, err := os.ReadFile(path)
 		if err != nil {
-			continue
+			return fmt.Errorf("read policy %q: %w", path, err)
 		}
 
-		// Simple parsing to extract title, trigger, action from comments if possible
+		relativePath, err := filepath.Rel(s.policyDir, path)
+		if err != nil {
+			return fmt.Errorf("derive policy ID for %q: %w", path, err)
+		}
+		id := strings.TrimSuffix(strings.TrimSuffix(filepath.ToSlash(relativePath), ".rego.disabled"), ".rego")
 		title, trigger, action := parseMetadata(string(content))
 		if title == "" {
 			title = id
@@ -78,50 +82,27 @@ func (s *Store) List(ctx context.Context) ([]Policy, error) {
 			Title:       title,
 			TriggerRule: trigger,
 			ActionType:  action,
-			Enabled:     enabled,
-			CreatedAt:   info.ModTime(), // Fallback to modtime
-			UpdatedAt:   info.ModTime(),
-			Code:        string(content),
+			Enabled:     strings.HasSuffix(name, ".rego"),
+			// The filesystem does not expose a portable creation time. ModTime is
+			// therefore the honest source for both displayed lifecycle fields.
+			CreatedAt: info.ModTime(),
+			UpdatedAt: info.ModTime(),
+			Code:      string(content),
 		})
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("walk policy directory: %w", err)
 	}
+	sort.Slice(policies, func(left, right int) bool { return policies[left].ID < policies[right].ID })
 	return policies, nil
 }
 
-// UpdateEnabled toggles the enabled state of a policy by renaming the file.
-func (s *Store) UpdateEnabled(ctx context.Context, id string, enabled bool) error {
-	basePath := filepath.Join(s.policyDir, id)
-	regoPath := basePath + ".rego"
-	disabledPath := basePath + ".rego.disabled"
-
-	if enabled {
-		if _, err := os.Stat(disabledPath); err == nil {
-			return os.Rename(disabledPath, regoPath)
-		}
-	} else {
-		if _, err := os.Stat(regoPath); err == nil {
-			return os.Rename(regoPath, disabledPath)
-		}
-	}
-	return nil // Already in desired state or doesn't exist
-}
-
-// Save writes a policy to disk.
-func (s *Store) Save(ctx context.Context, id string, content string, enabled bool) error {
-	ext := ".rego"
-	if !enabled {
-		ext = ".rego.disabled"
-	}
-	path := filepath.Join(s.policyDir, id+ext)
-
-	// If it already exists with the other extension, remove it
-	otherExt := ".rego.disabled"
-	if !enabled {
-		otherExt = ".rego"
-	}
-	os.Remove(filepath.Join(s.policyDir, id+otherExt))
-
-	return os.WriteFile(path, []byte(content), 0644)
-}
+// Policies are immutable GitOps assets in v1.0: there is deliberately NO
+// Save/UpdateEnabled here. Runtime policy mutation would let a single
+// compromised admin credential rewrite the enforcement rulebook, and an
+// unsanitized `id` would be a path-traversal footgun. If admin mutation ever
+// returns, it must come with Engine.Reload wiring and strict id validation.
 
 func parseMetadata(content string) (title, trigger, action string) {
 	lines := strings.Split(content, "\n")

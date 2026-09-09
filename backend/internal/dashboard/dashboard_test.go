@@ -8,14 +8,25 @@ import (
 )
 
 func TestHandler_ComplianceCalculation(t *testing.T) {
-	// Test the compliance status calculation logic from the handler
-	stats := db.LedgerStats{
-		TotalActionsToday: 100,
-		PolicyViolations:  20,
+	tests := []struct {
+		name  string
+		stats db.LedgerStats
+		want  float64
+	}{
+		{
+			name:  "violations reduce compliance",
+			stats: db.LedgerStats{TotalActionsToday: 100, PolicyViolations: 20},
+			want:  80,
+		},
+		{
+			name: "no actions is fully compliant",
+			want: 100,
+		},
 	}
-	expected := (1.0 - (float64(stats.PolicyViolations) / float64(stats.TotalActionsToday))) * 100
-	assert.Equal(t, 80.0, expected)
 
-	// When no actions today, compliance is 100%
-	assert.Equal(t, 100.0, 100.0)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			assert.Equal(t, test.want, complianceStatus(test.stats))
+		})
+	}
 }

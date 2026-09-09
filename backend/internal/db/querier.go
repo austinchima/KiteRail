@@ -26,10 +26,14 @@ type Querier interface {
 	ListLedgerEntriesAsc(ctx context.Context) ([]Ledger, error)
 	ListQuarantineByStatus(ctx context.Context, status string) ([]Quarantine, error)
 	ListRecentLedgerEntries(ctx context.Context) ([]Ledger, error)
-	MarkReplayFailed(ctx context.Context, dollar_1 uuid.UUID) error
-	MarkReplayed(ctx context.Context, dollar_1 uuid.UUID) error
+	// Guard must match the state the worker is in when it calls this: the entry
+	// was claimed to 'replaying'. A guard on 'approved' here silently matches
+	// zero rows, and the :execresult RowsAffected check in the Store is what
+	// turns that silent no-op into an error instead of wedging the machine.
+	MarkReplayFailed(ctx context.Context, dollar_1 uuid.UUID) (sql.Result, error)
+	MarkReplayed(ctx context.Context, dollar_1 uuid.UUID) (sql.Result, error)
 	RecoverStuckReplays(ctx context.Context) (int64, error)
-	ReturnToApproved(ctx context.Context, dollar_1 uuid.UUID) error
+	ReturnToApproved(ctx context.Context, dollar_1 uuid.UUID) (sql.Result, error)
 }
 
 var _ Querier = (*Queries)(nil)

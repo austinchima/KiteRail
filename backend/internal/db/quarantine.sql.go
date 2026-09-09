@@ -8,6 +8,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"time"
 
 	"github.com/google/uuid"
@@ -35,11 +36,19 @@ func (q *Queries) ApproveQuarantineEntry(ctx context.Context, arg ApproveQuarant
 }
 
 const claimApprovedForReplay = `-- name: ClaimApprovedForReplay :many
-UPDATE quarantine SET status = 'replaying'
-WHERE id IN (
-    SELECT id FROM quarantine WHERE status = 'approved' ORDER BY created_at LIMIT $1
+WITH candidates AS (
+    SELECT id
+    FROM quarantine
+    WHERE status = 'approved'
+    ORDER BY created_at, id
+    LIMIT $1
+    FOR UPDATE SKIP LOCKED
 )
-RETURNING id, agent_id, tool_name, payload, status, created_at, resolved_at, resolved_by, reason, attempts, replayed_at
+UPDATE quarantine AS q
+SET status = 'replaying'
+FROM candidates
+WHERE q.id = candidates.id AND q.status = 'approved'
+RETURNING q.id, q.agent_id, q.tool_name, q.payload, q.status, q.created_at, q.resolved_at, q.resolved_by, q.reason, q.attempts, q.replayed_at, q.request_headers
 `
 
 func (q *Queries) ClaimApprovedForReplay(ctx context.Context, limit int32) ([]Quarantine, error) {
@@ -63,6 +72,7 @@ func (q *Queries) ClaimApprovedForReplay(ctx context.Context, limit int32) ([]Qu
 			&i.Reason,
 			&i.Attempts,
 			&i.ReplayedAt,
+			&i.RequestHeaders,
 		); err != nil {
 			return nil, err
 		}
@@ -78,15 +88,16 @@ func (q *Queries) ClaimApprovedForReplay(ctx context.Context, limit int32) ([]Qu
 }
 
 const createQuarantineEntry = `-- name: CreateQuarantineEntry :one
-INSERT INTO quarantine (agent_id, tool_name, payload, status, created_at)
-VALUES ($1, $2, $3, 'pending', $4) RETURNING id::text
+INSERT INTO quarantine (agent_id, tool_name, payload, status, created_at, request_headers)
+VALUES ($1, $2, $3, 'pending', $4, $5) RETURNING id::text
 `
 
 type CreateQuarantineEntryParams struct {
-	AgentID   string    `json:"agent_id"`
-	ToolName  string    `json:"tool_name"`
-	Payload   []byte    `json:"payload"`
-	CreatedAt time.Time `json:"created_at"`
+	AgentID        string          `json:"agent_id"`
+	ToolName       string          `json:"tool_name"`
+	Payload        []byte          `json:"payload"`
+	CreatedAt      time.Time       `json:"created_at"`
+	RequestHeaders json.RawMessage `json:"request_headers"`
 }
 
 func (q *Queries) CreateQuarantineEntry(ctx context.Context, arg CreateQuarantineEntryParams) (string, error) {
@@ -95,6 +106,7 @@ func (q *Queries) CreateQuarantineEntry(ctx context.Context, arg CreateQuarantin
 		arg.ToolName,
 		arg.Payload,
 		arg.CreatedAt,
+		arg.RequestHeaders,
 	)
 	var id string
 	err := row.Scan(&id)
@@ -125,7 +137,7 @@ func (q *Queries) DenyQuarantineEntry(ctx context.Context, arg DenyQuarantineEnt
 }
 
 const getQuarantineEntry = `-- name: GetQuarantineEntry :one
-SELECT id, agent_id, tool_name, payload, status, created_at, resolved_at, resolved_by, reason, attempts, replayed_at FROM quarantine WHERE id = $1::uuid
+SELECT id, agent_id, tool_name, payload, status, created_at, resolved_at, resolved_by, reason, attempts, replayed_at, request_headers FROM quarantine WHERE id = $1::uuid
 `
 
 func (q *Queries) GetQuarantineEntry(ctx context.Context, dollar_1 uuid.UUID) (Quarantine, error) {
@@ -143,12 +155,13 @@ func (q *Queries) GetQuarantineEntry(ctx context.Context, dollar_1 uuid.UUID) (Q
 		&i.Reason,
 		&i.Attempts,
 		&i.ReplayedAt,
+		&i.RequestHeaders,
 	)
 	return i, err
 }
 
 const getQuarantineEntryForReplay = `-- name: GetQuarantineEntryForReplay :one
-SELECT id, agent_id, tool_name, payload, status, created_at, resolved_at, resolved_by, reason, attempts, replayed_at FROM quarantine WHERE id = $1::uuid
+SELECT id, agent_id, tool_name, payload, status, created_at, resolved_at, resolved_by, reason, attempts, replayed_at, request_headers FROM quarantine WHERE id = $1::uuid
 `
 
 func (q *Queries) GetQuarantineEntryForReplay(ctx context.Context, dollar_1 uuid.UUID) (Quarantine, error) {
@@ -166,12 +179,13 @@ func (q *Queries) GetQuarantineEntryForReplay(ctx context.Context, dollar_1 uuid
 		&i.Reason,
 		&i.Attempts,
 		&i.ReplayedAt,
+		&i.RequestHeaders,
 	)
 	return i, err
 }
 
 const listQuarantineByStatus = `-- name: ListQuarantineByStatus :many
-SELECT id, agent_id, tool_name, payload, status, created_at, resolved_at, resolved_by, reason, attempts, replayed_at FROM quarantine WHERE status = $1
+SELECT id, agent_id, tool_name, payload, status, created_at, resolved_at, resolved_by, reason, attempts, replayed_at, request_headers FROM quarantine WHERE status = $1
 `
 
 func (q *Queries) ListQuarantineByStatus(ctx context.Context, status string) ([]Quarantine, error) {
@@ -195,6 +209,7 @@ func (q *Queries) ListQuarantineByStatus(ctx context.Context, status string) ([]
 			&i.Reason,
 			&i.Attempts,
 			&i.ReplayedAt,
+			&i.RequestHeaders,
 		); err != nil {
 			return nil, err
 		}
@@ -209,23 +224,25 @@ func (q *Queries) ListQuarantineByStatus(ctx context.Context, status string) ([]
 	return items, nil
 }
 
-const markReplayFailed = `-- name: MarkReplayFailed :exec
-UPDATE quarantine SET status = 'replay_failed' WHERE id = $1::uuid AND status = 'approved'
+const markReplayFailed = `-- name: MarkReplayFailed :execresult
+UPDATE quarantine SET status = 'replay_failed' WHERE id = $1::uuid AND status = 'replaying'
 `
 
-func (q *Queries) MarkReplayFailed(ctx context.Context, dollar_1 uuid.UUID) error {
-	_, err := q.db.ExecContext(ctx, markReplayFailed, dollar_1)
-	return err
+// Guard must match the state the worker is in when it calls this: the entry
+// was claimed to 'replaying'. A guard on 'approved' here silently matches
+// zero rows, and the :execresult RowsAffected check in the Store is what
+// turns that silent no-op into an error instead of wedging the machine.
+func (q *Queries) MarkReplayFailed(ctx context.Context, dollar_1 uuid.UUID) (sql.Result, error) {
+	return q.db.ExecContext(ctx, markReplayFailed, dollar_1)
 }
 
-const markReplayed = `-- name: MarkReplayed :exec
+const markReplayed = `-- name: MarkReplayed :execresult
 UPDATE quarantine SET status = 'replayed', replayed_at = NOW(), attempts = attempts + 1
 WHERE id = $1::uuid AND status = 'replaying'
 `
 
-func (q *Queries) MarkReplayed(ctx context.Context, dollar_1 uuid.UUID) error {
-	_, err := q.db.ExecContext(ctx, markReplayed, dollar_1)
-	return err
+func (q *Queries) MarkReplayed(ctx context.Context, dollar_1 uuid.UUID) (sql.Result, error) {
+	return q.db.ExecContext(ctx, markReplayed, dollar_1)
 }
 
 const recoverStuckReplays = `-- name: RecoverStuckReplays :execrows
@@ -240,12 +257,11 @@ func (q *Queries) RecoverStuckReplays(ctx context.Context) (int64, error) {
 	return result.RowsAffected()
 }
 
-const returnToApproved = `-- name: ReturnToApproved :exec
+const returnToApproved = `-- name: ReturnToApproved :execresult
 UPDATE quarantine SET status = 'approved', attempts = attempts + 1
 WHERE id = $1::uuid AND status = 'replaying'
 `
 
-func (q *Queries) ReturnToApproved(ctx context.Context, dollar_1 uuid.UUID) error {
-	_, err := q.db.ExecContext(ctx, returnToApproved, dollar_1)
-	return err
+func (q *Queries) ReturnToApproved(ctx context.Context, dollar_1 uuid.UUID) (sql.Result, error) {
+	return q.db.ExecContext(ctx, returnToApproved, dollar_1)
 }

@@ -107,18 +107,7 @@ func (s *Store) appendOnce(ctx context.Context, entry db.LedgerEntry) error {
 	entry.Timestamp = normalizeTimestamp(entry.Timestamp)
 	entry.Hash = calculateHash(entry)
 
-	err = qtx.InsertLedgerEntry(ctx, db.InsertLedgerEntryParams{
-		SeqNum:      entry.SeqNum,
-		Timestamp:   entry.Timestamp,
-		Agent:       entry.Agent,
-		Tool:        entry.Tool,
-		Decision:    entry.Decision,
-		PolicyRule:  entry.PolicyRule,
-		PayloadHash: entry.PayloadHash,
-		PrevHash:    entry.PrevHash,
-		Hash:        entry.Hash,
-		RequestID:   entry.RequestID,
-	})
+	err = qtx.InsertLedgerEntry(ctx, db.InsertLedgerEntryParams(entry))
 	if err != nil {
 		return fmt.Errorf("failed to insert ledger entry: %w", err)
 	}

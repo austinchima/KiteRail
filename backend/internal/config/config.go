@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -14,7 +15,6 @@ type Config struct {
 	ListenAddr  string `yaml:"listen_addr"`
 	TargetURL   string `yaml:"target_url"`
 	PolicyDir   string `yaml:"policy_dir"`
-	NatsURL     string `yaml:"nats_url"`
 	PostgresDSN string `yaml:"postgres_dsn"`
 	LogLevel    string `yaml:"log_level"`
 
@@ -31,10 +31,15 @@ type Config struct {
 	// Environment: "production" enables strict startup validation.
 	Environment string `yaml:"environment"`
 
-	// HTTP server timeouts.
+	// HTTP server timeouts. ReadHeaderTimeout is the Slowloris defense
+	// (CVE-2025-53634): it bounds the time to read the request headers only,
+	// so a client dribbling bytes into the header block cannot pin a
+	// connection (and its goroutine) open indefinitely.
 	ReadTimeout         time.Duration `yaml:"read_timeout"`
+	ReadHeaderTimeout   time.Duration `yaml:"read_header_timeout"`
 	WriteTimeout        time.Duration `yaml:"write_timeout"`
 	IdleTimeout         time.Duration `yaml:"idle_timeout"`
+	ShutdownDrainDelay  time.Duration `yaml:"shutdown_drain_delay"`
 	MaxHeaderBytes      int           `yaml:"max_header_bytes"`
 	MaxRequestBodyBytes int64         `yaml:"max_request_body_bytes"`
 
@@ -57,16 +62,17 @@ type Config struct {
 }
 
 const (
-	defaultReadTimeout  = 10 * time.Second
-	defaultWriteTimeout = 30 * time.Second
-	defaultIdleTimeout  = 120 * time.Second
+	defaultReadTimeout        = 10 * time.Second
+	defaultReadHeaderTimeout  = 5 * time.Second
+	defaultWriteTimeout       = 30 * time.Second
+	defaultIdleTimeout        = 120 * time.Second
+	defaultShutdownDrainDelay = 5 * time.Second
 )
 
 func defaultConfig() *Config {
 	return &Config{
 		ListenAddr:          ":8080",
 		PolicyDir:           "./policies",
-		NatsURL:             "nats://localhost:4222",
 		PostgresDSN:         "postgres://kiterail:kiterail@localhost:5432/kiterail?sslmode=disable",
 		LogLevel:            "info",
 		APIKeys:             make(map[string]string),
@@ -75,8 +81,10 @@ func defaultConfig() *Config {
 		AllowedOrigins:      []string{"*"},
 		Environment:         "development",
 		ReadTimeout:         defaultReadTimeout,
+		ReadHeaderTimeout:   defaultReadHeaderTimeout,
 		WriteTimeout:        defaultWriteTimeout,
 		IdleTimeout:         defaultIdleTimeout,
+		ShutdownDrainDelay:  defaultShutdownDrainDelay,
 		MaxHeaderBytes:      http.DefaultMaxHeaderBytes,
 		MaxRequestBodyBytes: 1 << 20,
 		PGMaxOpenConns:      25,
@@ -113,7 +121,6 @@ func Load(path string) (*Config, error) {
 	setStringEnv(cfg, "KITERAIL_LISTEN_ADDR", &cfg.ListenAddr)
 	setStringEnv(cfg, "KITERAIL_TARGET_URL", &cfg.TargetURL)
 	setStringEnv(cfg, "KITERAIL_POLICY_DIR", &cfg.PolicyDir)
-	setStringEnv(cfg, "KITERAIL_NATS_URL", &cfg.NatsURL)
 	setStringEnv(cfg, "KITERAIL_POSTGRES_DSN", &cfg.PostgresDSN)
 	setStringEnv(cfg, "KITERAIL_LOG_LEVEL", &cfg.LogLevel)
 	setStringEnv(cfg, "KITERAIL_ENVIRONMENT", &cfg.Environment)
@@ -139,7 +146,7 @@ func Load(path string) (*Config, error) {
 	return cfg, nil
 }
 
-func setStringEnv(cfg *Config, key string, dst *string) {
+func setStringEnv(_ *Config, key string, dst *string) {
 	if val := os.Getenv(key); val != "" {
 		*dst = val
 	}
@@ -188,6 +195,12 @@ func (c *Config) Validate() error {
 		}
 	}
 
+	if c.Environment == "production" {
+		if slices.Contains(c.AllowedOrigins, "*") {
+			return fmt.Errorf("production must not use wildcard allowed_origins")
+		}
+	}
+
 	if c.Environment == "production" && os.Getenv("KITERAIL_ALLOW_DEV_CREDENTIALS") != "1" {
 		for _, dsn := range []string{c.PostgresDSN} {
 			if strings.Contains(dsn, "sslmode=disable") && strings.Contains(dsn, "localhost") {
@@ -210,11 +223,20 @@ func (c *Config) Validate() error {
 	if c.ReadTimeout <= 0 {
 		c.ReadTimeout = defaultReadTimeout
 	}
+	if c.ReadHeaderTimeout <= 0 {
+		c.ReadHeaderTimeout = defaultReadHeaderTimeout
+	}
 	if c.WriteTimeout <= 0 {
 		c.WriteTimeout = defaultWriteTimeout
 	}
 	if c.IdleTimeout <= 0 {
 		c.IdleTimeout = defaultIdleTimeout
+	}
+	if c.ShutdownDrainDelay <= 0 {
+		c.ShutdownDrainDelay = defaultShutdownDrainDelay
+	}
+	if c.PGMaxOpenConns > 0 && c.PGMaxOpenConns < 2 {
+		return fmt.Errorf("pg_max_open_conns must be at least 2: the replay advisory-lock connection must not starve normal database work")
 	}
 	return nil
 }

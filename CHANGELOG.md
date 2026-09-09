@@ -7,7 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-09-09
+
 ### Added
+- **Stabilization correctness pass**: strict duplicate-key/precision-preserving MCP JSON decoding; exact, Base64-aware mirrored MCP header validation; replay-safe protocol-header persistence; advisory-locked replay recovery; redirect-safe replays; recursive policy listing; and bounded strict simulation input. These paths now have regression tests for the previously unobservable failure modes.
+- **Production HTTP hardening** (`cmd/server`): `ReadHeaderTimeout` on the server (Slowloris defense; yaml `read_header_timeout`, default 5 s), exact CORS origins, and readiness-first graceful shutdown — SIGTERM flips `/readyz` to `503` (`{"ready": false, "draining": true}`), rejects protected new work during `shutdown_drain_delay`, then calls `srv.Shutdown`. Liveness (`/api/v1/health`, no DB) vs readiness (`/readyz`, Postgres ping plus OPA decision entry point) are split and documented.
+- **OPA engine Windows absolute-path fix** (`internal/opaengine`): `rego.Load` URL-parses its path arguments, so a Windows absolute policy dir (`D:\...`) had its drive letter eaten as a URL scheme and failed to load. New `loaderPath` helper converts absolute dirs to `file://` URLs (leading slash before the drive letter is load-bearing); relative dirs pass through unchanged. Three test workarounds reverted to plain `t.TempDir()`; `TestLoaderPath` pins the mapping.
+- **Linting as a permanent reviewer**: `.golangci.yml` (v2 config; errcheck + staticcheck with exclusions only for idiomatic unchecked returns — deferred `Close`/`Rollback`, `os.RemoveAll`/`Setenv`) and matching CI gates: `gofmt -l`, `golangci-lint-action@v7`, `govulncheck`, coverage artifact upload. Repo-wide lint is clean at 0 issues.
+- `.gitattributes` (`*.go text eol=lf`) fixing a pre-existing CRLF drift that made `gofmt -l` report 31 files dirty on a fresh checkout.
+- **MCP ingress per the 2026-07-28 stateless profile** (`internal/proxy`): the proxy now enforces the normative intermediary subset — (1) the body must be a **single** JSON-RPC 2.0 message: batch arrays, client-sent responses (`result`/`error` without `method`), and missing/`!= "2.0"` `jsonrpc` are rejected with HTTP 400 + JSON-RPC `-32600`; (2) mirrored-header validation **before OPA evaluation**: `Mcp-Method` / `Mcp-Name` headers, when present, MUST equal the body's `method` / `params.name` — contradiction → HTTP 400 + `-32020`, so policy input is never attacker-spoofable (absent headers are tolerated for legacy clients); (3) `MCP-Protocol-Version` is accepted and forwarded verbatim, not enforced (version pinning is a deliberate post-MVP decision — see `docs/ARCHITECTURE.md`); on allow, headers are mirrored, never rewritten. Documented in `docs/API.md` with a full proxy error-mapping table (`-32600` envelope, `-32020` contradiction, custom codes reserved to `-32000..-32019`).
+- **One documented meaning for `EvalInput.RawMethod`**: the JSON-RPC protocol method from the validated body (`"tools/call"`, or the actual method for other calls) — never the HTTP method, which is transport metadata. Typed doc comment in `internal/types`; simulator passes it through verbatim so simulated and enforced evaluations stay semantically identical.
+- **Ingress + E2E tests**: `proxy_test.go` gains the Phase 3 sweep — RawMethod == protocol method for `tools/call` and other methods, contradictory `Mcp-Method`/`Mcp-Name` rejected before OPA (upstream untouched, no ledger row, engine never sees the input), matching mirrored headers allowed and forwarded verbatim, protocol-version pass-through, batch rejection; the fail-closed ingress table grows jsonrpc-version, batch, and client-response rows. E2E Invariants 8a/8b (`cmd/server/e2e_integration_test.go`) pin header/body contradiction → 400/-32020 with zero upstream/ledger side effects, and mirror-don't-rewrite for all three MCP headers against the real stack.
+- **Typed policy actions** (`internal/types`): new `Action` string type with `ActionAllow` / `ActionDeny` / `ActionQuarantine` constants and a `Valid()` method; `ProxyDecision.Action` is now typed. The compiler — not convention — separates the three outcomes; all Go consumers (engine, proxy, tests) swept off string literals (SQL literals unchanged as the single source of truth).
+- **Decision validation at the trust boundary** (`internal/opaengine.Evaluate`): a policy decision with an empty/unknown action, an empty rule, or a non-decision value is rewritten to `{action: deny, rule: "invalid_policy_decision", explanation: "Policy engine returned an invalid decision"}` — fail closed on malformed policy output (garbage in, deny out). An empty result is a separate named deny, `no_policy_decision`, so the ledger distinguishes a missing entry point from malformed policy output.
+- **`rego.StrictBuiltinErrors(true)`** on the OPA engine: builtin runtime errors (bad JSON, division by zero, …) now surface as `policy_eval_error` instead of being silently swallowed into the fallback deny.
+- **Quarantine replay credential parity**: `quarantine.WithTargetAuthToken` WorkerOption — the replay worker injects the configured target service credential on HITL-approved replays; the agent's token is never presented upstream.
+- **Per-identity rate limiting** on the agent trust domain: token-bucket limiter keyed by authenticated identity (`rate_limit_rps` / `rate_limit_burst` config). Authentication always precedes the limiter so buckets key off verified identities only.
+- **Auth/trust-domain unit tests** (`cmd/server/main_test.go`): identity fixtures across agent/reviewer/admin roles exercising the three trust domains.
+- **Shared integration-test harness** (`internal/dbtest`): DSN resolution (`KITERAIL_POSTGRES_DSN` / `QUARANTINE_TEST_DSN`), advisory-locked DB open with migrations and per-test truncate — extracted from triplicated per-package plumbing.
+- **Quarantine schema compatibility migration** (`004_quarantine_uuid.sql`): fresh databases use UUID quarantine IDs, while existing integer IDs are preserved in `legacy_id` as rows are upgraded; replay-safe request headers are added without dropping quarantine data.
+- **End-to-end invariant suite** (`cmd/server/e2e_integration_test.go`): 6 invariants against real Postgres + real OPA + `httptest` upstream — allow-parity with credential stripping, quarantine→approve→replay parity, ledger hash-chain integrity, trust separation, ledger-outage fail-closed, replay exhaustion. Requires a DSN env var; skips otherwise.
+- `Worker.ProcessOnce(ctx)` seam enabling deterministic single-pass replay drains in tests (`Run` drives it per tick).
+- **Replay exhaustion integration test** (`TestIntegration_ReplayExhaustionSurfacesReplayFailed`) driving create→approve→claim→fail through a real `Worker` against real Postgres.
+- **Rego rule-presence pin** (`tests/policies/authz_test.rego`): `test_every_decision_carries_a_rule` asserts every `decisions`-set contribution across probe inputs carries a non-empty rule; existing aggregator tests now also pin their rule names (the Go engine fails closed on empty rules, so a forgotten rule would silently deny everything it touched — this catches the authoring mistake at CI time).
+- **Simulator parity test** (`internal/policystore/handler_test.go`): `TestSimulateParity` asserts `POST /simulate` returns byte-for-byte the enforcement outcome (action/rule/explanation) for well-formed and malformed decisions; a `raw_probe` rule fires only when `raw_method` is empty, so any re-introduced simulator default flips it to `default_deny` — the divergence is caught, not silent.
+- **Engine validation tests** (`internal/opaengine/engine_test.go`): `TestEngine_InvalidDecisions` (well-formed pass-through + missing-rule / empty-action / unknown-action / non-decision cases) and `TestEngine_EvalError` (builtin runtime error → `policy_eval_error`).
 - **sqlc migration**: Replaced manual SQL + `Scan()` in `internal/ledger` and `internal/quarantine` with sqlc-generated type-safe querier (`internal/db`). All queries now compile-time verified; zero reflection at runtime.
 - **Generated querier** (`internal/db/querier.go`): `LedgerEntry`, `QuarantineEntry`, `LedgerStats` types + `Querier` interface with full CRUD + `DB() *sql.DB` for transaction access.
 - **sqlc config** (`backend/sqlc.yaml`) + query files (`sql/ledger.sql`, `sql/quarantine.sql`, `sql/schema.sql`) with annotations for all CRUD operations.
@@ -21,6 +45,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Ledger request-ID round-trip integration test (`TestLedger_RequestID_SurvivesRoundTrip`) asserting persistence across raw row read, `GetLedgerEntry`, `ListLedgerEntriesAsc`, `ListRecentLedgerEntries`, and `Verify()`.
 
 ### Changed
+- **Toolchain/dependency security bump**: Go 1.26.0 → 1.26.6 (stdlib fixes for `crypto/tls`, `crypto/x509`, `net/http`, `net/url`, `net/textproto`, `mime`, `os`, `encoding/asn1`) and `golang.org/x/crypto` v0.54.0 → v0.56.0, `golang.org/x/net` v0.57.0 → v0.58.0. `govulncheck` reports zero reachable vulnerabilities.
+- **Typed dashboard response** (`internal/dashboard`): `map[string]interface{}` replaced with a typed `statsResponse` struct — the JSON wire format is unchanged, but the API boundary is now compile-time checked.
+- **Metric initialisms** (`internal/metrics`): `HttpRequestsTotal` → `HTTPRequestsTotal`, `HttpRequestDuration` → `HTTPRequestDuration` (staticcheck ST1003); call sites updated. Label values unchanged.
+- **`denyEntry` body hardening** (`internal/quarantine`): request body now capped at 1 MB via `http.MaxBytesReader` and decode errors checked — a malformed body returns `400` (`{"error": "invalid request body"}`) instead of silently denying with an empty reason; an empty body remains valid.
+- `internal/db/migrate.go` uses `path.Ext` instead of a hand-rolled `fileExt` helper.
+- **Simulator parity**: `POST /api/v1/policies/simulate` no longer defaults `raw_method` to `"tools/call"` — simulation runs the identical input through the identical engine and returns the enforcement outcome, not a simulator-specific approximation.
+- **Replay state-machine guards**: `MarkReplayFailed` now transitions only from `replaying` (previously guarded on `approved`, which would wedge a replay the moment any attempt failed); all replay transitions use `:execresult` and return `ErrStaleTransition` on zero affected rows instead of silently succeeding.
+- `mockStore` realigned to real SQL semantics (no claim-time attempt increment; transitions error on wrong state; `Approve` resets attempts) with a warning header comment — mocks must be tested against reality, not the other way around.
+- Token validation in `internal/auth` is now constant-time (`subtle.ConstantTimeCompare`, deliberately no early return) closing the timing side-channel on which configured token matched.
 - Replaced manual `database/sql` + `Scan()` with sqlc-generated type-safe methods in `internal/ledger` and `internal/quarantine`.
 - Stores now wrap `db.Querier` interface; `DB() *sql.DB` method exposed for SERIALIZABLE transactions.
 - Removed manual `Scan()` loops and raw SQL from store code — generated methods handle type-safe row mapping.
@@ -48,6 +81,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Shared decision types extracted** into `internal/types` (`EvalInput`, `ProxyDecision`): `internal/opaengine` no longer imports `internal/proxy`; type aliases in the proxy package keep every existing `proxy.EvalInput` / `proxy.ProxyDecision` reference compiling unchanged.
 
 ### Fixed
+- **Unchecked-error hygiene (errcheck)**: deferred `Close`/`RemoveAll`/advisory-unlock sites across tests, `migrate.go`, and `main.go` now either check the error or explicitly discard it (`_, _ =`), including a stale `require.NoError(t, err)` after an unchecked `os.WriteFile` in `opaengine` tests that failed to compile once the write was checked.
+- **OPA builtin runtime errors silently swallowed**: without strict builtin errors, a policy hitting a builtin error at runtime evaluated as undefined and fell into the fallback deny, masking broken policies as "no match". Now surfaced distinctly as `policy_eval_error`.
+- **Replay worker credential parity**: HITL-approved replays now carry the configured target service credential (`WithTargetAuthToken`); previously the replay path had no upstream credential story of its own.
+- **False `MarkReplayFailed` state guard**: guard targeted `approved` instead of `replaying`, so a failed replay could never be marked `replay_failed` and was retried forever (exhaustion wedge). Guard corrected; regression covered by an integration test with a proven negative control.
+- **Claim-time attempt accounting discrepancy**: the mock store incremented attempts at claim while the real store increments at resolution; mock realigned to real SQL semantics and unit tests updated to real call counts.
+- **Worker comment dishonesty**: false "claim incremented attempts" comment corrected to match actual behavior.
 - **Policy evaluation conflict bug**: Multiple policies defining the complete `decision` rule in the same package caused OPA `eval_conflict_error` (e.g., `refund_limit.rego` at $1,000 and `threshold.rego` at $500 for `stripe.charge.refund`). Fixed by introducing a decision aggregator in `policies/main.rego` that collects `decisions` set contributions and selects the most restrictive action (deny > quarantine > allow) with deterministic tie-breaking.
 - **Time window policy bug**: `time_window.rego` declared unused variables `ns` and `date`; fixed to use only `weekday := time.weekday(time.now_ns())`.
 - **Bug A — Ledger hash chain false positive on Verify()**: `calculateHash()` used `time.RFC3339Nano` which produces variable-width output and includes nanoseconds. Postgres `TIMESTAMP` stores only microseconds, so timestamps read back during `Verify()` were truncated, causing recomputed hashes to differ from stored hashes. Fixed by introducing `normalizeTimestamp()` (truncates to microseconds UTC) and using fixed-width format `2006-01-02T15:04:05.000000Z07:00` in `calculateHash()`. Added `TestCalculateHash_StableAfterMicrosecondTruncation` unit test and real-Postgres integration test `TestLedger_RoundtripWithVerify` that would fail on the old code.
@@ -58,6 +97,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Serialization retry storms**: fixed-width 5/10 ms backoff let concurrent appends exhaust 3 attempts under contention; retries are now exponential with jitter (bounded <2 s worst case) and context-cancellable.
 - Integration test helpers now apply schema migrations — suites previously failed against any fresh database.
 - CI now fails when checked-in `internal/db` code is stale relative to canonical SQL (`sqlc generate && git diff --exit-code -- internal/db`).
+- Migration execution now holds schema creation and version recording under one transaction-scoped advisory lock, so cancellation rolls back cleanly and cannot leave another pooled connection holding the lock.
+
+### Removed
+- **Dead NATS code** (`internal/events/`): the publisher/subscriber package carried `nats-server/v2` as a direct dependency for zero production value (main always wired `NoOpPublisher`). The `proxy.EventPublisher` interface and `NoOpPublisher` stay as the v1.1 streaming seam; the NATS implementation returns with the real feature.
+- Config `nats_url` / `KITERAIL_NATS_URL` (no consumer; config, tests, and `kiterail.example.yaml` swept).
+- Unreachable `policystore.Store.Save` / `Store.UpdateEnabled` and their tests (policy mutation is deliberately not exposed over HTTP; nothing calls `Engine.Reload`). The store integration test is rewritten List-only.
+- Hygiene deletions: `backend/test_db_import.go`, `backend/internal/ledger/test_db_import_test.go`, and `backend/sql/migrations/001_timestamptz.sql` (superseded by `sql/schema.sql` as the sqlc codegen source, applied by the integration harness; the changelog entry referencing the migration file predates this cleanup).
 
 ## [1.1.0-alpha] - 2026-08-01
 
@@ -151,7 +197,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Apache 2.0 license
 - Production README with architecture diagram, quickstart, and policy authoring guide
 
-[Unreleased]: https://github.com/austinchima/KiteRail/compare/v1.1.0-alpha...HEAD
+[Unreleased]: https://github.com/austinchima/KiteRail/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/austinchima/KiteRail/compare/v1.0.0...v1.1.0
 [1.1.0-alpha]: https://github.com/austinchima/KiteRail/compare/v1.0.0...v1.1.0-alpha
 [1.0.0]: https://github.com/austinchima/KiteRail/compare/v0.2.0...v1.0.0
 [0.2.0]: https://github.com/austinchima/KiteRail/compare/v0.1.0...v0.2.0

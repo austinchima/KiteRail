@@ -1,15 +1,23 @@
 package policystore
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/austinchima/kiterail/internal/mcp"
 	"github.com/austinchima/kiterail/internal/opaengine"
 	"github.com/austinchima/kiterail/internal/types"
 	"go.uber.org/zap"
 )
+
+// maxSimulationBodyBytes prevents an authenticated simulator request from
+// bypassing the ingress body's one-megabyte resource limit.
+const maxSimulationBodyBytes int64 = 1 << 20
 
 // Handler represents the HTTP handler for policies.
 type Handler struct {
@@ -60,20 +68,49 @@ func (h *Handler) handleList(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) handleSimulate(w http.ResponseWriter, r *http.Request) {
 	var input types.EvalInput
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+	r.Body = http.MaxBytesReader(w, r.Body, maxSimulationBodyBytes)
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			http.Error(w, "Request body exceeds limit", http.StatusRequestEntityTooLarge)
+			return
+		}
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
+	object, err := mcp.DecodeObject(body)
+	if err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	// Re-marshal the validated object so the standard decoder can populate the
+	// typed input. json.Number preserves client numeric values through this
+	// conversion; DecodeObject already rejected duplicate keys and batches.
+	normalized, err := json.Marshal(object)
+	if err != nil {
+		h.logger.Error("failed to normalize simulation input", zap.Error(err))
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	decoder := json.NewDecoder(bytes.NewReader(normalized))
+	decoder.UseNumber()
+	if err := decoder.Decode(&input); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if input.Tool == "" || input.Agent == "" {
+		http.Error(w, "tool and agent are required", http.StatusBadRequest)
+		return
+	}
 
-	// Default values for simulation if omitted
+	// Default values for simulation if omitted. RawMethod is deliberately NOT
+	// defaulted: simulation must run the identical input the proxy would send.
+	// RawMethod is the JSON-RPC protocol method from the validated body (see
+	// types.EvalInput); send "tools/call" here to replicate a runtime
+	// tools/call evaluation.
 	if input.Timestamp.IsZero() {
 		input.Timestamp = time.Now()
-	}
-	if input.Agent == "" {
-		input.Agent = "simulator"
-	}
-	if input.RawMethod == "" {
-		input.RawMethod = "tools/call"
 	}
 
 	start := time.Now()
