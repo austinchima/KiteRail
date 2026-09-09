@@ -6,6 +6,7 @@ package db
 
 import (
 	"database/sql"
+	"encoding/json"
 	"time"
 
 	"github.com/google/uuid"
@@ -25,15 +26,16 @@ type Ledger struct {
 }
 
 type Quarantine struct {
-	ID         uuid.UUID      `json:"id"`
-	AgentID    string         `json:"agent_id"`
-	ToolName   string         `json:"tool_name"`
-	Payload    []byte         `json:"payload"`
-	Status     string         `json:"status"`
-	CreatedAt  time.Time      `json:"created_at"`
-	ResolvedAt sql.NullTime   `json:"resolved_at"`
-	ResolvedBy sql.NullString `json:"resolved_by"`
-	Reason     sql.NullString `json:"reason"`
-	Attempts   int32          `json:"attempts"`
-	ReplayedAt sql.NullTime   `json:"replayed_at"`
+	ID             uuid.UUID       `json:"id"`
+	AgentID        string          `json:"agent_id"`
+	ToolName       string          `json:"tool_name"`
+	Payload        []byte          `json:"payload"`
+	Status         string          `json:"status"`
+	CreatedAt      time.Time       `json:"created_at"`
+	ResolvedAt     sql.NullTime    `json:"resolved_at"`
+	ResolvedBy     sql.NullString  `json:"resolved_by"`
+	Reason         sql.NullString  `json:"reason"`
+	Attempts       int32           `json:"attempts"`
+	ReplayedAt     sql.NullTime    `json:"replayed_at"`
+	RequestHeaders json.RawMessage `json:"request_headers"`
 }

@@ -1,6 +1,8 @@
 -- Schema for KiteRail ledger and quarantine tables
--- Mirror of internal/db/migrations (applied by internal/db/migrate.go).
--- This file is used by sqlc to generate type-safe Go code
+-- Source of truth for sqlc code generation (see sqlc.yaml).
+-- The RUNTIME schema is applied by the embedded migrations in
+-- internal/db/migrations (applied by internal/db/migrate.go) — this file is
+-- NOT applied at runtime, and the two must be kept in sync by hand.
 
 -- Ledger table for tamper-evident audit trail
 CREATE TABLE IF NOT EXISTS ledger (
@@ -31,7 +33,8 @@ CREATE TABLE IF NOT EXISTS quarantine (
     resolved_by TEXT,
     reason TEXT,
     attempts INT NOT NULL DEFAULT 0,
-    replayed_at TIMESTAMPTZ
+    replayed_at TIMESTAMPTZ,
+    request_headers JSONB NOT NULL DEFAULT '{}'
 );
 
 CREATE INDEX IF NOT EXISTS idx_quarantine_status ON quarantine (status);

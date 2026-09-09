@@ -32,10 +32,10 @@ func TestStore_Create(t *testing.T) {
 	require.NoError(t, err)
 
 	mock.ExpectQuery("INSERT INTO quarantine").
-		WithArgs("agent_1", "tool_x", []byte(`{"data": "test"}`), sqlmock.AnyArg()).
+		WithArgs("agent_1", "tool_x", []byte(`{"data": "test"}`), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("550e8400-e29b-41d4-a716-446655440000"))
 
-	id, err := store.Create(context.Background(), "agent_1", "tool_x", []byte(`{"data": "test"}`))
+	id, err := store.Create(context.Background(), "agent_1", "tool_x", []byte(`{"data": "test"}`), nil)
 	require.NoError(t, err)
 	assert.Equal(t, "550e8400-e29b-41d4-a716-446655440000", id)
 
@@ -52,8 +52,8 @@ func TestStore_Get(t *testing.T) {
 	require.NoError(t, err)
 	now := time.Now()
 
-	rows := sqlmock.NewRows([]string{"id", "agent_id", "tool_name", "payload", "status", "created_at", "resolved_at", "resolved_by", "reason", "attempts", "replayed_at"}).
-		AddRow("550e8400-e29b-41d4-a716-446655440000", "agent_1", "tool_x", []byte("payload"), "pending", now, nil, "", nil, 0, nil)
+	rows := sqlmock.NewRows([]string{"id", "agent_id", "tool_name", "payload", "status", "created_at", "resolved_at", "resolved_by", "reason", "attempts", "replayed_at", "request_headers"}).
+		AddRow("550e8400-e29b-41d4-a716-446655440000", "agent_1", "tool_x", []byte("payload"), "pending", now, nil, "", nil, 0, nil, []byte(`{}`))
 
 	mock.ExpectQuery("SELECT (.+) FROM quarantine WHERE id = \\$1::uuid").
 		WithArgs("550e8400-e29b-41d4-a716-446655440000").
@@ -78,9 +78,9 @@ func TestStore_List(t *testing.T) {
 	require.NoError(t, err)
 	now := time.Now()
 
-	rows := sqlmock.NewRows([]string{"id", "agent_id", "tool_name", "payload", "status", "created_at", "resolved_at", "resolved_by", "reason", "attempts", "replayed_at"}).
-		AddRow("550e8400-e29b-41d4-a716-446655440000", "agent_1", "tool_x", []byte("payload1"), "pending", now, nil, "", nil, 0, nil).
-		AddRow("550e8400-e29b-41d4-a716-446655440001", "agent_2", "tool_y", []byte("payload2"), "pending", now, nil, "", nil, 0, nil)
+	rows := sqlmock.NewRows([]string{"id", "agent_id", "tool_name", "payload", "status", "created_at", "resolved_at", "resolved_by", "reason", "attempts", "replayed_at", "request_headers"}).
+		AddRow("550e8400-e29b-41d4-a716-446655440000", "agent_1", "tool_x", []byte("payload1"), "pending", now, nil, "", nil, 0, nil, []byte(`{}`)).
+		AddRow("550e8400-e29b-41d4-a716-446655440001", "agent_2", "tool_y", []byte("payload2"), "pending", now, nil, "", nil, 0, nil, []byte(`{}`))
 
 	mock.ExpectQuery("SELECT (.+) FROM quarantine WHERE status = \\$1").
 		WithArgs("pending").

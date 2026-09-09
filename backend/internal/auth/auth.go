@@ -9,6 +9,7 @@ package auth
 
 import (
 	"context"
+	"crypto/subtle"
 	"net/http"
 
 	"go.uber.org/zap"
@@ -51,6 +52,33 @@ func AgentFromContext(ctx context.Context) string {
 	return "unknown"
 }
 
+// lookupIdentity finds the identity for a presented token without leaking
+// timing information about which configured token it does or doesn't match.
+// A plain map lookup hashes-then-buckets the key, which already avoids a
+// naive byte-by-byte prefix comparison — but it's still input-dependent
+// (bucket chain length, hash collisions) in ways that are cheap to close off
+// entirely. This is O(n) in the number of configured identities, which is
+// the right trade-off for the tens-to-low-hundreds of API keys KiteRail
+// expects; it is NOT the right approach once you're validating against
+// thousands of keys; at that scale switch to HMAC-derived tokens you can
+// verify without a lookup table at all.
+func lookupIdentity(identities map[string]Identity, token string) (Identity, bool) {
+	tokenBytes := []byte(token)
+	var found Identity
+	var ok bool
+	for candidate, identity := range identities {
+		if subtle.ConstantTimeCompare([]byte(candidate), tokenBytes) == 1 {
+			found = identity
+			ok = true
+			// Deliberately no early return: bailing out as soon as we find a
+			// match reintroduces a timing signal (fast match vs. scanning the
+			// whole map on a miss). Keep iterating every candidate so a hit
+			// and a miss take the same number of comparisons.
+		}
+	}
+	return found, ok
+}
+
 // Middleware authenticates requests using a token → Identity map.
 // Tokens are accepted ONLY via the Authorization: Bearer header —
 // never query parameters, which leak into logs, referrers and proxies.
@@ -65,7 +93,7 @@ func Middleware(identities map[string]Identity, logger *zap.Logger, next http.Ha
 		}
 		token := authHeader[len(prefix):]
 
-		identity, ok := identities[token]
+		identity, ok := lookupIdentity(identities, token)
 		if !ok {
 			logger.Warn("rejected unauthorized request",
 				zap.String("token_prefix", token[:min(8, len(token))]),

@@ -1,6 +1,6 @@
 -- name: CreateQuarantineEntry :one
-INSERT INTO quarantine (agent_id, tool_name, payload, status, created_at)
-VALUES ($1, $2, $3, 'pending', $4) RETURNING id::text;
+INSERT INTO quarantine (agent_id, tool_name, payload, status, created_at, request_headers)
+VALUES ($1, $2, $3, 'pending', $4, $5) RETURNING id::text;
 
 -- name: GetQuarantineEntry :one
 SELECT * FROM quarantine WHERE id = $1::uuid;
@@ -12,8 +12,12 @@ SELECT * FROM quarantine WHERE status = $1;
 UPDATE quarantine SET status = $1, resolved_at = $2, resolved_by = $3, attempts = 0
 WHERE id = sqlc.arg(id)::uuid AND status IN ('pending', 'replay_failed');
 
--- name: MarkReplayFailed :exec
-UPDATE quarantine SET status = 'replay_failed' WHERE id = $1::uuid AND status = 'approved';
+-- name: MarkReplayFailed :execresult
+-- Guard must match the state the worker is in when it calls this: the entry
+-- was claimed to 'replaying'. A guard on 'approved' here silently matches
+-- zero rows, and the :execresult RowsAffected check in the Store is what
+-- turns that silent no-op into an error instead of wedging the machine.
+UPDATE quarantine SET status = 'replay_failed' WHERE id = $1::uuid AND status = 'replaying';
 
 -- name: DenyQuarantineEntry :execresult
 UPDATE quarantine SET status = $1, resolved_at = $2, resolved_by = $3, reason = $4
@@ -23,17 +27,25 @@ WHERE id = sqlc.arg(id)::uuid AND status IN ('pending', 'replay_failed');
 SELECT * FROM quarantine WHERE id = $1::uuid;
 
 -- name: ClaimApprovedForReplay :many
-UPDATE quarantine SET status = 'replaying'
-WHERE id IN (
-    SELECT id FROM quarantine WHERE status = 'approved' ORDER BY created_at LIMIT $1
+WITH candidates AS (
+    SELECT id
+    FROM quarantine
+    WHERE status = 'approved'
+    ORDER BY created_at, id
+    LIMIT $1
+    FOR UPDATE SKIP LOCKED
 )
-RETURNING *;
+UPDATE quarantine AS q
+SET status = 'replaying'
+FROM candidates
+WHERE q.id = candidates.id AND q.status = 'approved'
+RETURNING q.*;
 
--- name: MarkReplayed :exec
+-- name: MarkReplayed :execresult
 UPDATE quarantine SET status = 'replayed', replayed_at = NOW(), attempts = attempts + 1
 WHERE id = $1::uuid AND status = 'replaying';
 
--- name: ReturnToApproved :exec
+-- name: ReturnToApproved :execresult
 UPDATE quarantine SET status = 'approved', attempts = attempts + 1
 WHERE id = $1::uuid AND status = 'replaying';
 
