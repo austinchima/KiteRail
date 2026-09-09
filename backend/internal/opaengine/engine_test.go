@@ -2,8 +2,10 @@ package opaengine
 
 import (
 	"context"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -24,7 +26,11 @@ func TestLoaderPath(t *testing.T) {
 
 	abs := filepath.Join(t.TempDir(), "policies")
 	if filepath.IsAbs(abs) { // always true for t.TempDir, but pins the intent
-		want := "file:///" + filepath.ToSlash(abs)
+		path := filepath.ToSlash(abs)
+		if !strings.HasPrefix(path, "/") {
+			path = "/" + path
+		}
+		want := (&url.URL{Scheme: "file", Path: path}).String()
 		assert.Equal(t, want, loaderPath(abs))
 	}
 }
