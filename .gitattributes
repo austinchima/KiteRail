@@ -1,0 +1,4 @@
+# Go sources are always LF: gofmt rewrites CRLF, so a Windows checkout with
+# core.autocrlf=true would otherwise flag every file as unformatted (and the
+# CI gofmt gate would fail for Windows-developed code).
+*.go text eol=lf

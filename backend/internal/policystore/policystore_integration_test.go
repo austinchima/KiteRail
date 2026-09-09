@@ -10,48 +10,48 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestIntegration_SaveListAndTogglePolicy(t *testing.T) {
+// TestIntegration_ListPolicies seeds a policy directory on disk (the GitOps
+// shape production uses) and verifies the store's read model: enabled and
+// disabled (.rego.disabled) files, metadata parsing, and content exposure.
+// There is intentionally no mutation path to test — policies are immutable
+// GitOps assets in v1.0 (see store.go).
+func TestIntegration_ListPolicies(t *testing.T) {
 	ctx := context.Background()
 	tmpDir := t.TempDir()
 
-	store, err := New(tmpDir)
-	require.NoError(t, err)
-
-	err = store.Save(ctx, "refund_review", `# Title: Refund Review
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "refund_review.rego"), []byte(`# Title: Refund Review
 # Trigger: refund_requested
 # Action: quarantine
 
 package kiterail.authz
 
 default allow := false
-`, true)
+`), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "legacy_deny.rego.disabled"), []byte(`# Title: Legacy Deny
+# Trigger: old_rule
+# Action: deny
+`), 0644))
+
+	store, err := New(tmpDir)
 	require.NoError(t, err)
 
 	policies, err := store.List(ctx)
 	require.NoError(t, err)
-	require.Len(t, policies, 1)
-	assert.Equal(t, "refund_review", policies[0].ID)
-	assert.Equal(t, "Refund Review", policies[0].Title)
-	assert.Equal(t, "refund_requested", policies[0].TriggerRule)
-	assert.Equal(t, "quarantine", policies[0].ActionType)
-	assert.True(t, policies[0].Enabled)
+	require.Len(t, policies, 2)
 
-	err = store.UpdateEnabled(ctx, "refund_review", false)
-	require.NoError(t, err)
-	assert.NoFileExists(t, filepath.Join(tmpDir, "refund_review.rego"))
-	assert.FileExists(t, filepath.Join(tmpDir, "refund_review.rego.disabled"))
+	byID := map[string]Policy{}
+	for _, p := range policies {
+		byID[p.ID] = p
+	}
 
-	policies, err = store.List(ctx)
-	require.NoError(t, err)
-	require.Len(t, policies, 1)
-	assert.False(t, policies[0].Enabled)
+	enabled := byID["refund_review"]
+	assert.True(t, enabled.Enabled)
+	assert.Equal(t, "Refund Review", enabled.Title)
+	assert.Equal(t, "refund_requested", enabled.TriggerRule)
+	assert.Equal(t, "quarantine", enabled.ActionType)
+	assert.Contains(t, enabled.Code, "package kiterail.authz")
 
-	err = store.Save(ctx, "refund_review", "# Title: Refund Review Updated", true)
-	require.NoError(t, err)
-	assert.FileExists(t, filepath.Join(tmpDir, "refund_review.rego"))
-	assert.NoFileExists(t, filepath.Join(tmpDir, "refund_review.rego.disabled"))
-
-	content, err := os.ReadFile(filepath.Join(tmpDir, "refund_review.rego"))
-	require.NoError(t, err)
-	assert.Equal(t, "# Title: Refund Review Updated", string(content))
+	disabled := byID["legacy_deny"]
+	assert.False(t, disabled.Enabled)
+	assert.Equal(t, "Legacy Deny", disabled.Title)
 }

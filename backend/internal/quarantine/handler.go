@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 
@@ -13,6 +14,11 @@ import (
 	"github.com/austinchima/kiterail/internal/db"
 	"github.com/austinchima/kiterail/internal/ledger"
 )
+
+// maxDenyBodyBytes caps the deny-request body: the payload carries only a
+// human-readable reason string, so anything larger is abuse. The cap keeps a
+// large body from being buffered just to be rejected.
+const maxDenyBodyBytes = 1 << 10 // 1 KiB
 
 // StoreAPI is the persistence surface used by handler/worker (mockable).
 type StoreAPI interface {
@@ -25,6 +31,7 @@ type StoreAPI interface {
 	MarkReplayFailed(ctx context.Context, id string) error
 	ReturnToApproved(ctx context.Context, id string) error
 	RecoverStuckReplays(ctx context.Context) (int64, error)
+	WithReplayLock(ctx context.Context, replay func(context.Context) error) (bool, error)
 }
 
 // Handler exposes REST endpoints for the quarantine queue.
@@ -146,7 +153,21 @@ func (h *Handler) denyEntry(w http.ResponseWriter, r *http.Request, id string) {
 	var body struct {
 		Reason string `json:"reason"`
 	}
-	json.NewDecoder(r.Body).Decode(&body)
+	// Cap the body before decoding and fail on malformed JSON. An empty body
+	// is legitimate (denial without a reason), surfaced as io.EOF.
+	r.Body = http.MaxBytesReader(w, r.Body, maxDenyBodyBytes)
+	decoder := json.NewDecoder(r.Body)
+	if err := decoder.Decode(&body); err != nil && !errors.Is(err, io.EOF) {
+		h.logger.Error("failed to decode deny request body", zap.String("id", id), zap.Error(err))
+		http.Error(w, `{"error": "invalid request body"}`, http.StatusBadRequest)
+		return
+	}
+	// A second value or trailing garbage is not part of this request. Reading
+	// through EOF also enforces the size cap when a small object has large padding.
+	if err := decoder.Decode(new(json.RawMessage)); !errors.Is(err, io.EOF) {
+		http.Error(w, `{"error": "invalid request body"}`, http.StatusBadRequest)
+		return
+	}
 
 	if err := h.store.Deny(r.Context(), id, reviewerID, body.Reason); err != nil {
 		if errors.Is(err, ErrAlreadyResolved) {

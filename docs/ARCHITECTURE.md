@@ -90,7 +90,8 @@ flowchart TB
 ### Why these six planes?
 
 - **Agent plane** is deliberately outside our trust boundary. We don't ship an SDK. Any agent that speaks JSON-RPC / MCP works today.
-- **Ingress middleware** is the only path in. Bearer auth is checked *before* policy evaluation so anonymous traffic never touches the OPA engine.
+- **Ingress middleware** is the only path in. Bearer auth is checked *before* policy evaluation so anonymous traffic never touches the OPA engine. The ingress speaks the 2026-07-28 MCP stateless profile: the body is one duplicate-free JSON-RPC 2.0 object and always the source of truth for policy; singleton `Mcp-Method` / `Mcp-Name` mirrored headers are validated against the method and the appropriate parameter (`name` or `uri`) when present, with Base64 MCP names decoded before comparison (contradiction → HTTP 400 + `-32020` *before* OPA), then mirrored — never rewritten — on the way out.
+- **`MCP-Protocol-Version` is accepted and forwarded, not enforced** (v1.0). The 2026-07-28 spec requires the header on every Streamable HTTP POST, but pinning a version is an ops commitment: API7 and LiteLLM both show the ecosystem cost of pinning before upstream servers settle. KiteRail records nothing version-dependent in the ledger today, so forwarding verbatim carries no integrity risk. Enforcement (version pinning + negotiation) is a deliberate v1.1 decision, revisited once the field's version distribution is measurable.
 - **Control plane** is the deterministic core. It's stateless — restart it, no state is lost.
 - **Data plane** owns durability. Postgres is the single source of truth for both the audit ledger and the quarantine queue.
 - **Human plane** exists because the EU AI Act, SOX, and HIPAA all require it for high-risk decisions. The dashboard is a thin client over the same REST API a third-party UI could hit.
@@ -216,7 +217,7 @@ The proxy is inline on the critical path of an agent making a real API call. It 
 Every ledger entry stores `hash = SHA256(prev_hash || entry_data)`. Two concurrent writers reading the same `prev_hash` would fork the chain silently. The fix:
 
 - Each `Append()` opens a `SERIALIZABLE` transaction and takes `SELECT ... FOR UPDATE` on the tip of the chain.
-- On serialization failure (Postgres error code `40001`), retry up to 3 times with 5–10 ms linear backoff.
+- On serialization failure (Postgres error code `40001`), retry up to 8 times with cancellable exponential backoff and jitter (bounded to roughly two seconds).
 - If all retries fail, the error is surfaced — never silently discarded.
 
 This is documented in the [v1.0 CHANGELOG](../CHANGELOG.md#100---2026-08-01) because the previous version had a silent bug here. It's the kind of correctness issue only visible under real concurrent load; catching it in v0.2 → v1.0 was the last thing standing between "prototype" and "shippable."
@@ -227,7 +228,7 @@ This is documented in the [v1.0 CHANGELOG](../CHANGELOG.md#100---2026-08-01) bec
 
 ### 3. Graceful shutdown
 
-`main.go` installs a signal handler on `SIGINT` / `SIGTERM`. On shutdown, the HTTP server stops accepting new connections and waits up to 10 seconds for in-flight requests to complete before closing the Postgres connection pool. No half-written ledger entries.
+`main.go` installs a signal handler on `SIGINT` / `SIGTERM`. On shutdown it flips readiness first, cancels the replay worker, keeps a bounded drain delay (default 5 seconds) during which protected routes refuse new work, then waits up to 10 seconds for in-flight requests to complete before closing the Postgres connection pool. No half-written ledger entries.
 
 ### 4. Conflict-safe quarantine resolution
 
@@ -243,7 +244,7 @@ pending → approved → replaying → replayed
 pending → denied
 ```
 
-Claims are atomic (`UPDATE ... WHERE status = 'approved' ... FOR UPDATE SKIP LOCKED`), so multiple server instances can run workers without double-replaying. Every replay carries `Idempotency-Key: kiterail-quarantine-<id>`, stable across retries *and* crash recoveries. On startup, entries stuck in `replaying` from a previous crash are returned to `approved` — approved work is never lost.
+Claims are atomic (`UPDATE ... FROM (SELECT ... FOR UPDATE SKIP LOCKED)`), and each recovery-and-replay pass holds a transaction-scoped Postgres advisory lock. This deliberately serializes active worker passes across replicas: recovery can never reset a live worker's claim, while `SKIP LOCKED` remains a database-level defense-in-depth guard. Every replay carries `Idempotency-Key: kiterail-quarantine-<id>`, stable across retries *and* crash recoveries. A redirect is treated as a failed replay and is not followed. The next locked pass returns entries abandoned in `replaying` by a crashed worker to `approved`.
 
 ### 6. Separated trust domains
 
@@ -276,7 +277,7 @@ type LedgerStore interface {
     Append(ctx context.Context, entry ledger.LedgerEntry) error
 }
 type QuarantineStore interface {
-    Create(ctx context.Context, agentID, toolName string, payload []byte) (string, error)
+    Create(ctx context.Context, agentID, toolName string, payload []byte, headers http.Header) (string, error)
 }
 ```
 
@@ -284,7 +285,7 @@ The hash-chain invariant lives in the store implementation, not the proxy, so a 
 
 ### Add a new event sink (e.g. NATS, Kafka, SIEM webhook)
 
-Implement `proxy.EventPublisher`. v1.0 ships with a `NoOpPublisher` (audit events go straight to the Postgres ledger). v1.1 will re-introduce a `NatsPublisher` for real-time streaming; a `KafkaPublisher` or a `WebhookPublisher` would be a drop-in swap.
+Implement `proxy.EventPublisher`. v1.0 ships with a `NoOpPublisher` (audit events go straight to the Postgres ledger). v1.1 will re-introduce a `NatsPublisher` for real-time streaming; a `KafkaPublisher` or a `WebhookPublisher` would be a drop-in swap. (The half-built NATS implementation that used to live in `internal/events` was deleted in Phase 4 hardening — it carried `nats-server/v2` as a direct dependency for zero production value. The interface is the v1.1 seam; the implementation returns with the real feature.)
 
 ### Add a new vertical (DevOps, healthcare, HR)
 

@@ -7,7 +7,7 @@
 ![Go](https://img.shields.io/badge/Go-1.26%2B-00ADD8?logo=go) ![License](https://img.shields.io/badge/License-Apache_2.0-blue) ![OPA](https://img.shields.io/badge/Policy-OPA_Rego-7d9fc3)
 
 ## Status
-v1.0.0. Looking for design partners running agentic workflows in fintech or DevOps.
+v1.1.0. Looking for design partners running agentic workflows in fintech or DevOps.
 
 ## The Problem
 
@@ -107,6 +107,10 @@ cd KiteRail
 
 # Start all services (proxy + Postgres)
 docker compose up -d
+
+# Compose exposes Postgres as host port 55432 -> container port 5432.
+# In PowerShell, use this DSN when running integration tests from the host:
+$env:KITERAIL_POSTGRES_DSN = "postgres://kiterail:kiterail@localhost:55432/kiterail?sslmode=disable"
 
 # Test the health endpoint
 curl http://localhost:8080/api/v1/health

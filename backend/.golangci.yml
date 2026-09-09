@@ -1,0 +1,22 @@
+# golangci-lint v2 configuration for KiteRail.
+# Default linter set (errcheck, govet, ineffassign, staticcheck, unused).
+# errcheck exclusions are limited to error-ignoring idioms that are standard
+# across the Go ecosystem (deferred Close, deferred Rollback after Commit,
+# response writes after headers are sent); anything with a real failure mode
+# must be handled in code.
+version: "2"
+linters:
+  default: standard
+  settings:
+    errcheck:
+      exclude-functions:
+        - (*encoding/json.Encoder).Encode
+        - (io.Closer).Close
+        - (*database/sql.DB).Close
+        - (net/http.ResponseWriter).Write
+        - (*database/sql.Tx).Rollback
+        - (*database/sql.Rows).Close
+        - (*go.uber.org/zap.Logger).Sync
+        - io.Copy
+        - os.Setenv
+        - os.Unsetenv
