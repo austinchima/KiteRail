@@ -1,3 +1,5 @@
+> **Historical document.** Written in 2026 when the product was named KiteRail; kept as a record of the stabilization work. Current design: [ARCHITECTURE.md](ARCHITECTURE.md).
+
 # KiteRail MVP Stabilisation & Improvement Plan
 
 > **Prepared:** 2026-09-07 · Principal-engineer review of the codebase and the

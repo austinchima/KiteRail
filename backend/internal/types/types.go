@@ -5,8 +5,22 @@ package types
 
 import "time"
 
-// EvalInput is the payload passed to the OPA engine for every request.
+// EvalSchemaVersion identifies the shape of the policy input document. It is
+// additive-only: new fields may appear, existing ones never change meaning, so
+// policies written today keep working as protocols and agents evolve.
+const EvalSchemaVersion = "elodea.eval/v1"
+
+// EvalInput is the payload passed to the OPA engine for every request. It is
+// protocol-neutral: an ingress adapter (MCP today; A2A, function-calling
+// gateways or future MCP revisions tomorrow) normalizes its wire format into
+// these fields, so policies, the ledger, and human review never depend on a
+// particular agent protocol.
 type EvalInput struct {
+	// Protocol names the ingress adapter that produced this input ("mcp").
+	Protocol string `json:"protocol,omitempty"`
+	// ProtocolVersion is the client-declared protocol revision, if any.
+	ProtocolVersion string `json:"protocol_version,omitempty"`
+
 	Tool      string         `json:"tool"`
 	Arguments map[string]any `json:"arguments"`
 	Agent     string         `json:"agent"`
@@ -48,4 +62,7 @@ type ProxyDecision struct {
 	Rule        string  `json:"rule"`
 	LatencyMs   float64 `json:"latency_ms"`
 	Explanation string  `json:"explanation"`
+	// PolicyVersion fingerprints the exact policy bundle that decided, so an
+	// auditor can tie every ledger entry to the rules in force at the time.
+	PolicyVersion string `json:"policy_version,omitempty"`
 }

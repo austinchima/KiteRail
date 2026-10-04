@@ -1,4 +1,5 @@
-package kiterail.authz
+# Title: Decision aggregator (deny beats hold beats allow)
+package elodea.authz
 
 import rego.v1
 

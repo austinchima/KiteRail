@@ -14,6 +14,8 @@ import (
 	"github.com/austinchima/kiterail/internal/db"
 	"github.com/austinchima/kiterail/internal/ledger"
 	"github.com/austinchima/kiterail/internal/mcp"
+	"github.com/austinchima/kiterail/internal/metrics"
+	"github.com/austinchima/kiterail/internal/types"
 )
 
 // defaultMaxReplayAttempts is the production retry limit per approval.
@@ -34,6 +36,18 @@ type Worker struct {
 	maxReplayAttempts int
 	pollInterval      time.Duration
 	batchSize         int
+	recheck           PolicyRecheck
+}
+
+// PolicyRecheck re-evaluates a stored request against the policy in force
+// now. Approval binds a human decision to a request, not to a policy forever:
+// if policy has since started denying it (a newly sanctioned jurisdiction, a
+// revoked agent), the replay is blocked and returned to reviewers.
+type PolicyRecheck func(ctx context.Context, agentID string, payload []byte, headers http.Header) (types.ProxyDecision, error)
+
+// WithPolicyRecheck enables replay-time policy re-evaluation.
+func WithPolicyRecheck(recheck PolicyRecheck) WorkerOption {
+	return func(wk *Worker) { wk.recheck = recheck }
 }
 
 // WorkerOption customises a Worker after construction. Options keep the
@@ -43,7 +57,7 @@ type WorkerOption func(*Worker)
 
 // WithTargetAuthToken gives replays the same upstream credential as normal
 // ALLOW requests (proxy.go applies it via its own Director). Without this an
-// upstream that requires KITERAIL_TARGET_AUTH_TOKEN would reject every
+// upstream that requires ELODEA_TARGET_AUTH_TOKEN would reject every
 // approved replay with 401/403. The token is used only for the outbound
 // Authorization header — it is never persisted, logged, or copied into the
 // audit ledger.
@@ -156,7 +170,36 @@ func (wk *Worker) processClaimed(ctx context.Context, entry db.QuarantineEntry) 
 	if approvedBy == "" {
 		approvedBy = "unknown"
 	}
+
+	// Crash recovery counts interrupted replays as attempts, so an entry can
+	// arrive here already past the limit. Park it without another upstream call.
+	if entry.Attempts > wk.maxReplayAttempts {
+		wk.logger.Error("replay attempts exhausted by interrupted replays, marking as replay_failed",
+			zap.String("id", entry.ID), zap.Int("attempts", entry.Attempts))
+		if err := wk.store.MarkReplayFailed(ctx, entry.ID); err != nil {
+			wk.logger.Error("failed to mark replay_failed", zap.String("id", entry.ID), zap.Error(err))
+			return
+		}
+		wk.recordLedger(ctx, entry.ID, entry, approvedBy, "replay_exhausted")
+		return
+	}
+
+	if wk.recheck != nil && wk.blockedByCurrentPolicy(ctx, entry, approvedBy) {
+		return
+	}
+
+	// Write-ahead audit: nothing executes upstream unless the ledger has a
+	// record of it first, mirroring the proxy's fail-closed ALLOW path.
+	if err := wk.appendLedger(ctx, entry, approvedBy, "replay_started"); err != nil {
+		wk.logger.Error("ledger unavailable, deferring replay", zap.String("id", entry.ID), zap.Error(err))
+		if err := wk.store.ReturnToApproved(ctx, entry.ID); err != nil {
+			wk.logger.Error("failed to release entry for retry", zap.String("id", entry.ID), zap.Error(err))
+		}
+		return
+	}
+
 	outcome, err := wk.doReplay(ctx, entry.ID, entry, approvedBy)
+	metrics.ReplayOutcomesTotal.WithLabelValues(outcomeLabel(outcome)).Inc()
 	if err == nil {
 		if markErr := wk.store.MarkReplayed(ctx, entry.ID); markErr != nil {
 			wk.logger.Error("replay succeeded but status update failed",
@@ -190,6 +233,57 @@ func (wk *Worker) processClaimed(ctx context.Context, entry db.QuarantineEntry) 
 	}
 }
 
+// blockedByCurrentPolicy re-evaluates the stored request. A current deny (or
+// a failure to evaluate, which fails closed) parks the entry as replay_failed
+// so it reappears in the reviewer inbox; allow and quarantine proceed, since
+// quarantine is exactly what the human just resolved.
+func (wk *Worker) blockedByCurrentPolicy(ctx context.Context, entry db.QuarantineEntry, approvedBy string) bool {
+	headers, err := mcp.DecodeReplayHeaders(entry.RequestHeaders)
+	var decision types.ProxyDecision
+	if err == nil {
+		decision, err = wk.recheck(ctx, entry.AgentID, entry.Payload, headers)
+	}
+	if err != nil {
+		decision = types.ProxyDecision{Action: types.ActionDeny, Rule: "replay_recheck_error", Explanation: err.Error()}
+	}
+	if decision.Action != types.ActionDeny {
+		return false
+	}
+
+	wk.logger.Warn("approved replay blocked by current policy",
+		zap.String("id", entry.ID), zap.String("rule", decision.Rule), zap.String("policy_version", decision.PolicyVersion))
+	metrics.ReplayOutcomesTotal.WithLabelValues("blocked_by_policy").Inc()
+	if err := wk.store.MarkReplayFailed(ctx, entry.ID); err != nil {
+		wk.logger.Error("failed to mark replay_failed", zap.String("id", entry.ID), zap.Error(err))
+		return true
+	}
+	if wk.lStore == nil {
+		return true
+	}
+	if err := wk.lStore.Append(ctx, db.LedgerEntry{
+		Agent:         approvedBy,
+		Tool:          entry.ToolName,
+		Decision:      "replay_blocked_by_policy",
+		PolicyRule:    decision.Rule,
+		PayloadHash:   payloadHash(entry.Payload),
+		RequestID:     entry.ID,
+		PolicyVersion: decision.PolicyVersion,
+	}); err != nil {
+		wk.logger.Error("failed to write replay block ledger entry", zap.String("id", entry.ID), zap.Error(err))
+	}
+	return true
+}
+
+// outcomeLabel bounds metric cardinality: upstream status codes collapse to
+// their class.
+func outcomeLabel(outcome string) string {
+	const prefix = "replay_upstream_"
+	if len(outcome) == len(prefix)+3 && outcome[:len(prefix)] == prefix {
+		return prefix + outcome[len(prefix):len(prefix)+1] + "xx"
+	}
+	return outcome
+}
+
 // doReplay performs a single upstream POST of the stored payload.
 func (wk *Worker) doReplay(ctx context.Context, id string, entry db.QuarantineEntry, approvedBy string) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, wk.targetURL, bytes.NewReader(entry.Payload))
@@ -204,13 +298,16 @@ func (wk *Worker) doReplay(ctx context.Context, id string, entry db.QuarantineEn
 		req.Header[name] = append([]string(nil), values...)
 	}
 
-	// These headers are KiteRail-controlled execution metadata. Apply them
+	// These headers are Elodea-controlled execution metadata. Apply them
 	// after stored MCP headers so a captured request cannot override them.
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-KiteRail-Agent", entry.AgentID)
-	req.Header.Set("X-KiteRail-Quarantine-ID", id)
-	req.Header.Set("X-KiteRail-Approved-By", approvedBy)
+	req.Header.Set("X-Elodea-Agent", entry.AgentID)
+	req.Header.Set("X-Elodea-Quarantine-ID", id)
+	req.Header.Set("X-Elodea-Approved-By", approvedBy)
 	// Durable idempotency marker: stable across retries AND crash recoveries.
+	// The prefix predates the Elodea rename and must not change: upstreams
+	// deduplicate on this exact key, so a new prefix would let a replay that
+	// straddles an upgrade execute twice.
 	req.Header.Set("Idempotency-Key", "kiterail-quarantine-"+id)
 	// Authenticate to the upstream exactly like the ALLOW path does. The
 	// token must never be persisted or logged — it stays in memory only.
@@ -231,21 +328,27 @@ func (wk *Worker) doReplay(ctx context.Context, id string, entry db.QuarantineEn
 	return "approved_replayed", nil
 }
 
-// recordLedger appends the HITL approval + replay outcome entry. Errors are
-// logged but do not propagate — the durable state machine remains the source
-// of truth for retries.
+// recordLedger appends a replay outcome entry. Errors are logged but do not
+// propagate: the write-ahead replay_started entry already records the
+// execution, and the durable state machine remains the source of truth.
 func (wk *Worker) recordLedger(ctx context.Context, id string, entry db.QuarantineEntry, approvedBy, decision string) {
-	if wk.lStore == nil {
-		return
+	if err := wk.appendLedger(ctx, entry, approvedBy, decision); err != nil {
+		wk.logger.Error("failed to write replay ledger entry", zap.String("id", id), zap.Error(err))
 	}
-	if err := wk.lStore.Append(ctx, db.LedgerEntry{
+}
+
+// appendLedger writes a HITL replay entry keyed by the real payload hash, so
+// it joins to the proxy's original quarantine decision for the same request.
+func (wk *Worker) appendLedger(ctx context.Context, entry db.QuarantineEntry, approvedBy, decision string) error {
+	if wk.lStore == nil {
+		return nil
+	}
+	return wk.lStore.Append(ctx, db.LedgerEntry{
 		Agent:       approvedBy,
 		Tool:        entry.ToolName,
 		Decision:    decision,
 		PolicyRule:  "hitl_approval",
-		PayloadHash: id,
-		RequestID:   id,
-	}); err != nil {
-		wk.logger.Error("failed to write replay ledger entry", zap.String("id", id), zap.Error(err))
-	}
+		PayloadHash: payloadHash(entry.Payload),
+		RequestID:   entry.ID,
+	})
 }

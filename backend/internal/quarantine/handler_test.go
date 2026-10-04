@@ -3,6 +3,7 @@ package quarantine
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -18,6 +19,7 @@ import (
 	"go.uber.org/zap/zaptest/observer"
 
 	"github.com/austinchima/kiterail/internal/db"
+	"github.com/austinchima/kiterail/internal/types"
 )
 
 // ---- Mock store ----
@@ -130,6 +132,7 @@ func (m *mockStore) RecoverStuckReplays(_ context.Context) (int64, error) {
 	for _, e := range m.entries {
 		if e.Status == StatusReplaying {
 			e.Status = StatusApproved
+			e.Attempts++ // mirrors `attempts = attempts + 1` in RecoverStuckReplays
 			n++
 		}
 	}
@@ -335,9 +338,63 @@ func TestWorker_ReplaySuccess_TransitionsToReplayed(t *testing.T) {
 
 	assert.Equal(t, int32(1), calls.Load())
 	assert.Equal(t, StatusReplayed, store.entries["c5d3e9a4-9d6b-4c0a-1e8f-3f4a5b6c7d82"].Status)
+	// Write-ahead entry precedes the upstream call; the outcome follows it.
+	require.Len(t, lg.entries, 2)
+	assert.Equal(t, "replay_started", lg.entries[0].Decision)
+	assert.Equal(t, "approved_replayed", lg.entries[1].Decision)
+	assert.Equal(t, "jane", lg.entries[1].Agent, "ledger must record the human approver")
+	assert.Equal(t, payloadHash([]byte(`{"x":1}`)), lg.entries[1].PayloadHash,
+		"HITL entries carry the real payload hash so they join to the original decision")
+}
+
+// A ledger outage must stop the replay before anything executes upstream.
+func TestWorker_LedgerUnavailable_SkipsUpstream(t *testing.T) {
+	var calls atomic.Int32
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer target.Close()
+
+	const id = "c5d3e9a4-9d6b-4c0a-1e8f-3f4a5b6c7d83"
+	store := newMockStore(&db.QuarantineEntry{
+		ID: id, AgentID: "a", ToolName: "t", Payload: []byte(`{"x":1}`),
+		Status: StatusApproved, ResolvedBy: "jane", CreatedAt: time.Now(),
+	})
+	wk := newTestWorker(store, target.URL, &mockLedger{err: errors.New("ledger down")})
+
+	entries, err := store.ClaimApproved(context.Background(), 10)
+	require.NoError(t, err)
+	wk.processClaimed(context.Background(), entries[0])
+
+	assert.Equal(t, int32(0), calls.Load(), "no upstream call without a write-ahead ledger entry")
+	assert.Equal(t, StatusApproved, store.entries[id].Status)
+}
+
+// Replays interrupted by crashes count as attempts; past the limit the entry
+// is parked without another upstream call.
+func TestWorker_RecoveredPastLimit_MarksFailedWithoutReplay(t *testing.T) {
+	var calls atomic.Int32
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer target.Close()
+
+	const id = "c5d3e9a4-9d6b-4c0a-1e8f-3f4a5b6c7d84"
+	store := newMockStore(&db.QuarantineEntry{
+		ID: id, AgentID: "a", ToolName: "t", Payload: []byte(`{"x":1}`),
+		Status: StatusReplaying, Attempts: defaultMaxReplayAttempts, ResolvedBy: "jane", CreatedAt: time.Now(),
+	})
+	lg := &mockLedger{}
+	wk := newTestWorker(store, target.URL, lg)
+
+	wk.ProcessOnce(context.Background())
+
+	assert.Equal(t, int32(0), calls.Load())
+	assert.Equal(t, StatusReplayFailed, store.entries[id].Status)
 	require.Len(t, lg.entries, 1)
-	assert.Equal(t, "approved_replayed", lg.entries[0].Decision)
-	assert.Equal(t, "jane", lg.entries[0].Agent, "ledger must record the human approver")
+	assert.Equal(t, "replay_exhausted", lg.entries[0].Decision)
 }
 
 func TestWorker_ProcessOnceRecoversOnlyWithinReplayPass(t *testing.T) {
@@ -614,5 +671,62 @@ func TestWorker_AuthToken_NeverLeaksIntoPayloadLedgerOrLogs(t *testing.T) {
 				"token must never be logged")
 		}
 	}
+	assert.Equal(t, StatusReplayed, store.entries[id].Status)
+}
+
+// Approval does not outlive policy: a request policy now denies is blocked at
+// replay and returned to reviewers instead of executing.
+func TestWorker_ReplayBlockedWhenCurrentPolicyDenies(t *testing.T) {
+	var calls atomic.Int32
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer target.Close()
+
+	const id = "c5d3e9a4-9d6b-4c0a-1e8f-3f4a5b6c7d85"
+	store := newMockStore(&db.QuarantineEntry{
+		ID: id, AgentID: "agent-7", ToolName: "swift.wire.initiate", Payload: []byte(`{"x":1}`),
+		Status: StatusApproved, ResolvedBy: "jane", CreatedAt: time.Now(),
+	})
+	lg := &mockLedger{}
+	wk := newTestWorker(store, target.URL, lg)
+	var sawAgent string
+	wk.recheck = func(_ context.Context, agentID string, _ []byte, _ http.Header) (types.ProxyDecision, error) {
+		sawAgent = agentID
+		return types.ProxyDecision{Action: types.ActionDeny, Rule: "aml_jurisdiction_block", PolicyVersion: "sha256:new"}, nil
+	}
+
+	wk.ProcessOnce(context.Background())
+
+	assert.Equal(t, "agent-7", sawAgent, "recheck evaluates as the original agent")
+	assert.Equal(t, int32(0), calls.Load(), "a now-denied request must not execute")
+	assert.Equal(t, StatusReplayFailed, store.entries[id].Status)
+	require.Len(t, lg.entries, 1)
+	assert.Equal(t, "replay_blocked_by_policy", lg.entries[0].Decision)
+	assert.Equal(t, "aml_jurisdiction_block", lg.entries[0].PolicyRule)
+	assert.Equal(t, "sha256:new", lg.entries[0].PolicyVersion)
+}
+
+func TestWorker_ReplayProceedsWhenCurrentPolicyStillQuarantines(t *testing.T) {
+	var calls atomic.Int32
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer target.Close()
+
+	const id = "c5d3e9a4-9d6b-4c0a-1e8f-3f4a5b6c7d86"
+	store := newMockStore(&db.QuarantineEntry{
+		ID: id, AgentID: "agent-7", ToolName: "t", Payload: []byte(`{"x":1}`),
+		Status: StatusApproved, ResolvedBy: "jane", CreatedAt: time.Now(),
+	})
+	wk := newTestWorker(store, target.URL, &mockLedger{})
+	wk.recheck = func(context.Context, string, []byte, http.Header) (types.ProxyDecision, error) {
+		return types.ProxyDecision{Action: types.ActionQuarantine, Rule: "wire_high_value"}, nil
+	}
+
+	wk.ProcessOnce(context.Background())
+	assert.Equal(t, int32(1), calls.Load())
 	assert.Equal(t, StatusReplayed, store.entries[id].Status)
 }

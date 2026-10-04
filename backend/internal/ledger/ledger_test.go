@@ -42,6 +42,8 @@ func TestStore_Append(t *testing.T) {
 	}
 
 	mock.ExpectBegin()
+	mock.ExpectExec("SELECT pg_advisory_xact_lock").
+		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectQuery("SELECT COALESCE").
 		WillReturnRows(sqlmock.NewRows([]string{"hash", "seq_num"}).AddRow("prev_hash_123", 42))
 
@@ -57,6 +59,7 @@ func TestStore_Append(t *testing.T) {
 			"prev_hash_123",
 			sqlmock.AnyArg(), // hash
 			sqlmock.AnyArg(), // request_id
+			sqlmock.AnyArg(), // policy_version
 		).WillReturnResult(sqlmock.NewResult(43, 1))
 	mock.ExpectCommit()
 
@@ -76,6 +79,8 @@ func TestStore_Append_BackoffRespectsContextCancellation(t *testing.T) {
 	require.NoError(t, err)
 
 	mock.ExpectBegin()
+	mock.ExpectExec("SELECT pg_advisory_xact_lock").
+		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectQuery("SELECT COALESCE").
 		WillReturnError(&pq.Error{Code: "40001"})
 	mock.ExpectRollback()
@@ -123,9 +128,9 @@ func TestStore_Verify(t *testing.T) {
 	}
 	entry2.Hash = calculateHash(entry2)
 
-	rows := sqlmock.NewRows([]string{"seq_num", "timestamp", "agent", "tool", "decision", "policy_rule", "payload_hash", "prev_hash", "hash", "request_id"}).
-		AddRow(entry1.SeqNum, entry1.Timestamp, entry1.Agent, entry1.Tool, entry1.Decision, entry1.PolicyRule, entry1.PayloadHash, entry1.PrevHash, entry1.Hash, "").
-		AddRow(entry2.SeqNum, entry2.Timestamp, entry2.Agent, entry2.Tool, entry2.Decision, entry2.PolicyRule, entry2.PayloadHash, entry2.PrevHash, entry2.Hash, "")
+	rows := sqlmock.NewRows([]string{"seq_num", "timestamp", "agent", "tool", "decision", "policy_rule", "payload_hash", "prev_hash", "hash", "request_id", "policy_version"}).
+		AddRow(entry1.SeqNum, entry1.Timestamp, entry1.Agent, entry1.Tool, entry1.Decision, entry1.PolicyRule, entry1.PayloadHash, entry1.PrevHash, entry1.Hash, "", "").
+		AddRow(entry2.SeqNum, entry2.Timestamp, entry2.Agent, entry2.Tool, entry2.Decision, entry2.PolicyRule, entry2.PayloadHash, entry2.PrevHash, entry2.Hash, "", "")
 
 	mock.ExpectQuery("SELECT (.+) FROM ledger ORDER BY seq_num ASC").
 		WillReturnRows(rows)
@@ -158,8 +163,8 @@ func TestStore_Verify_InvalidChain(t *testing.T) {
 		Hash:        "fake_hash_1", // Invalid hash
 	}
 
-	rows := sqlmock.NewRows([]string{"seq_num", "timestamp", "agent", "tool", "decision", "policy_rule", "payload_hash", "prev_hash", "hash", "request_id"}).
-		AddRow(entry1.SeqNum, entry1.Timestamp, entry1.Agent, entry1.Tool, entry1.Decision, entry1.PolicyRule, entry1.PayloadHash, entry1.PrevHash, entry1.Hash, "")
+	rows := sqlmock.NewRows([]string{"seq_num", "timestamp", "agent", "tool", "decision", "policy_rule", "payload_hash", "prev_hash", "hash", "request_id", "policy_version"}).
+		AddRow(entry1.SeqNum, entry1.Timestamp, entry1.Agent, entry1.Tool, entry1.Decision, entry1.PolicyRule, entry1.PayloadHash, entry1.PrevHash, entry1.Hash, "", "")
 
 	mock.ExpectQuery("SELECT (.+) FROM ledger ORDER BY seq_num ASC").
 		WillReturnRows(rows)
@@ -191,5 +196,20 @@ func TestCalculateHash_CoversPolicyRule(t *testing.T) {
 	e.PolicyRule = "rule_b"
 	if calculateHash(e) == h1 {
 		t.Fatalf("tampering with PolicyRule is undetectable")
+	}
+}
+
+func TestCalculateHash_PolicyVersionIsBackwardCompatible(t *testing.T) {
+	e := db.LedgerEntry{SeqNum: 1, Timestamp: time.Now(), Agent: "a", Tool: "t",
+		Decision: "allow", PolicyRule: "r", PayloadHash: "p"}
+	legacy := calculateHash(e)
+	e.PolicyVersion = "sha256:0123456789abcdef"
+	versioned := calculateHash(e)
+	if versioned == legacy {
+		t.Fatalf("policy version must be covered by the hash once set")
+	}
+	e.PolicyVersion = ""
+	if calculateHash(e) != legacy {
+		t.Fatalf("entries without a policy version must keep their original hash")
 	}
 }

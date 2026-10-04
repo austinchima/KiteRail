@@ -8,6 +8,8 @@ import (
 	"io/fs"
 	"path"
 	"sort"
+	"strconv"
+	"strings"
 
 	_ "github.com/lib/pq"
 )
@@ -48,7 +50,7 @@ func Migrate(ctx context.Context, sqlDB *sql.DB) error {
 			names = append(names, e.Name())
 		}
 	}
-	sort.Strings(names)
+	sortMigrations(names)
 
 	for _, name := range names {
 		var applied bool
@@ -77,4 +79,29 @@ func Migrate(ctx context.Context, sqlDB *sql.DB) error {
 		return fmt.Errorf("failed to commit migrations: %w", err)
 	}
 	return nil
+}
+
+// sortMigrations orders files by their numeric prefix, so "0005_x.sql" runs
+// after "004_y.sql" regardless of zero padding. Names compare lexically only
+// as a tie-breaker.
+func sortMigrations(names []string) {
+	sort.SliceStable(names, func(i, j int) bool {
+		vi, vj := migrationNumber(names[i]), migrationNumber(names[j])
+		if vi != vj {
+			return vi < vj
+		}
+		return names[i] < names[j]
+	})
+}
+
+func migrationNumber(name string) int {
+	digits := name
+	if idx := strings.IndexFunc(name, func(r rune) bool { return r < '0' || r > '9' }); idx >= 0 {
+		digits = name[:idx]
+	}
+	n, err := strconv.Atoi(digits)
+	if err != nil {
+		return int(^uint(0) >> 1) // unnumbered files run last
+	}
+	return n
 }

@@ -1,11 +1,92 @@
 # Changelog
 
-All notable changes to KiteRail will be documented in this file.
+All notable changes to Elodea (formerly KiteRail) will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+Ships as **2.0.0**: the rename changes header, metric, and policy-package names (see *Changed*).
+
+### Added
+- **Single sign-on for reviewers and admins (OIDC).** Works with Okta, Entra ID, Auth0, Keycloak and any OIDC provider. The server runs the Authorization Code flow with PKCE and gives the browser only an opaque `HttpOnly` session cookie. Roles come from IdP groups (`oidc.reviewer_groups`, `oidc.admin_groups`), and approvals and denials are recorded under the verified identity. Sessions are server-side (migration `008_sso.sql`), expire after 8h or 1h idle by default, and are revoked on sign-out. Session-authenticated changes require `X-Requested-With: elodea` and an allowed `Origin`. Agents still authenticate with bearer tokens only. Static reviewer/admin tokens become optional break-glass access. Configure with `ELODEA_OIDC_*` or the Helm `oidc` values; see `docs/DEPLOYMENT.md`.
+- **Held-action notifications** to Slack and to a generic webhook signed with HMAC-SHA256 (`X-Elodea-Signature`), so reviewers hear about a held action immediately. Delivered through a Postgres outbox (migration `009_notifications.sql`): survives restarts, retries with backoff, never sent concurrently by two replicas, and skipped if the action was reviewed first. Messages never include tool arguments. Configure with `ELODEA_NOTIFY_SLACK_WEBHOOK_URL`, `ELODEA_NOTIFY_WEBHOOK_URL`, `ELODEA_NOTIFY_WEBHOOK_SECRET` (each with a `_FILE` variant where secret) and `ELODEA_CONSOLE_URL`; new metric `elodea_notifications_total`.
+- Console: `#inbox` (and other view names) in the URL open that view directly, so notification links land on the approvals queue.
+- Console: **Continue with SSO** sign-in, with the token form kept as a fallback, and clear messages when the provider refuses or the user has no Elodea group.
+- Docs: SSO and notification guides in `docs/DEPLOYMENT.md`, webhook event format and signature check in `docs/API.md`, an updated architecture (package map, replay sequence, notification outbox) and a current roadmap in `docs/ARCHITECTURE.md`.
+
+### Fixed
+- `SECURITY.md` pointed vulnerability reports at a repository that doesn't exist.
+- Slack notifications escape agent-supplied text in the message preview as well as the body, so a tool name cannot trigger `@channel`.
+
+### Changed
+- **Renamed from KiteRail to Elodea.** Product name, binary (`/usr/local/bin/elodea`), container image (`ghcr.io/<owner>/elodea`), Helm chart (`deploy/helm/elodea`), example config (`backend/elodea.example.yaml`), console, and docs.
+- **Environment variables are now `ELODEA_*`.** `KITERAIL_*` names still work: each is applied when its `ELODEA_*` counterpart is unset, and startup logs a deprecation warning listing them.
+- **Headers are now `X-Elodea-*`** (`Agent`, `Quarantine-ID`, `Approved-By`, `Decision`, `Policy-Version`). Upstreams that read `X-KiteRail-*` must switch. Inbound `X-KiteRail-*` headers are still stripped from agent requests, so they cannot be spoofed.
+- **Policy package is now `elodea.authz`** and the input schema is `elodea.eval/v1`. A bundle that still declares `package kiterail.authz` is rejected with an error naming the fix, rather than silently denying every call.
+- **Prometheus metrics are now `elodea_*`.** Update dashboards and alerts.
+- **MCP decision metadata is now `result._meta["elodea/decision"]`** (was `kiterail/decision`). Clients that read it must switch.
+- **Docker Compose defaults** use the `elodea` database, user, and password. Existing local volumes created as `kiterail` need recreating or an explicit DSN.
+
+### Unchanged on purpose
+- The replay `Idempotency-Key` prefix stays `kiterail-quarantine-<id>`, because upstreams deduplicate on it and a replay that straddles the upgrade must not execute twice.
+- Applied database migrations, the `kiterail.ledger_maintenance` setting, and the ledger trigger names are unchanged.
+- The Go module path and repository URL stay `github.com/austinchima/kiterail` until the repository itself is renamed.
+
+## [1.2.0] - 2026-10-03
+
+Production-readiness release: closes two policy-bypass paths, makes the audit
+trail complete and externally verifiable, and makes the enforcement core
+protocol-neutral so new agent protocols plug in without touching policy,
+ledger, or review.
+
+### Security
+- **Upstream URL pinned.** Allowed requests are forwarded to exactly `target_url`; previously the agent-controlled request path and query were appended, letting a policy-allowed body reach any upstream endpoint with the server's credential.
+- **Agent-controlled headers stripped.** `Proxy-Authorization`, `Cookie`, `Idempotency-Key`, and all `X-KiteRail-*` headers are removed before forwarding (previously only `Authorization`), so an agent cannot impersonate a human-approved replay. The proxy now asserts `X-KiteRail-Agent` itself.
+- **Separation of duties enforced at startup.** One identity can no longer be configured as both an agent and a reviewer/admin.
+- Production rejects tokens shorter than 24 bytes and non-`http(s)` target URLs.
+
+### Audit integrity
+- Ledger is **append-only at the database level** (migration `005`): `UPDATE`/`DELETE`/`TRUNCATE` are rejected unless an operator opts in per transaction.
+- Every decision records the **policy bundle version** that made it (`policy_version`, migration `006`); old entries keep verifying.
+- Human approvals are ledgered (`approved`); approve/deny return `503` if their audit entry cannot be written.
+- Replays write a **write-ahead** `replay_started` entry and do not execute if the ledger is down.
+- HITL entries carry the real payload hash, joining them to the original `quarantine` decision; a failed quarantine insert is ledgered as `quarantine_store_failed`.
+- New endpoints: `GET /api/v1/ledger/head` (external anchoring), `GET /api/v1/ledger/export` (streaming NDJSON), keyset-paginated and filterable `GET /api/v1/ledger`, and anchored `verify` with a detailed report.
+
+### Protocol-neutral core
+- New ingress **adapter** boundary (`proxy.Adapter`); MCP is the first adapter. Policy input gains `schema_version`, `protocol`, and `protocol_version`.
+- **MCP-native outcomes**: MCP clients receive denials and quarantines as `isError` tool results (or JSON-RPC errors `-32010`/`-32011`) the model can read, instead of HTTP errors.
+- Baseline `policies/mcp/protocol.rego` allows read-only MCP discovery (`initialize`, `ping`, `*/list`) keyed on the protocol method.
+
+### Policy fixes found while building the landing-page simulator
+- `refund_limit.rego` auto-allowed refunds whose `amount` was `null` or a boolean (Rego orders those below numbers). Amounts must now be numbers; anything else is held as `refund_amount_invalid`. Regression tests added.
+- Policy explanations are plain sentences (no dash punctuation), and every policy file declares a `# Title:` for the console.
+- Held actions now store the `policy_rule` and `explanation` that held them (migration `007`), returned as `PolicyRule` / `Explanation` on quarantine items, so reviewers see why without consulting the ledger.
+
+### Policy lifecycle
+- **Hot reload** via `SIGHUP`, `POST /api/v1/policies/reload` (admin), and directory polling (`policy_reload_interval`, default 30 s). A bundle that fails to compile is rejected and the previous one keeps enforcing.
+- **Replay-time policy re-check**: an approved action that current policy now denies is blocked (`replay_blocked_by_policy`) and returned to reviewers.
+- Fixed `wire_transfer.rego` allowing transfers with a missing jurisdiction, and `pii_redaction.rego` erroring on non-string values.
+
+### Reliability
+- Allowed tool calls that stream their result (SSE or chunked output) are no longer cut off by the server-wide `write_timeout`. The upstream must start responding within the timeout (`ResponseHeaderTimeout`); after that a live stream may run as long as it needs. Regression test included.
+- Ledger appends serialize on a transaction-scoped advisory lock instead of SERIALIZABLE retries, removing abort/backoff storms under load.
+- Crash-interrupted replays now count as attempts, so a poison payload cannot loop forever; exhausted entries park without another upstream call.
+- Quarantine list is ordered and capped (500), unknown `status` values return `400`, and database errors return `500` instead of `404`.
+- One ledger verification/export runs at a time (`429` otherwise).
+- Postgres connection retries reuse one pool and honour shutdown.
+- Migrations run in numeric order regardless of zero padding.
+- Quarantine JSON renders unset `ResolvedAt`/`ReplayedAt` as `null`, as documented.
+
+### Operations & packaging
+- Distroless, non-root image from digest-pinned bases with a built-in `-healthcheck` probe, version injected at build time, and LICENSE included.
+- Helm chart (`deploy/helm/kiterail`): hardened pod security, probes, secrets mounted as files, ConfigMap policies with hot reload, PDB, HPA, NetworkPolicy, ServiceMonitor.
+- `*_FILE` variants for every secret, `tls_terminated_upstream`, `metrics_listen_addr` (internal metrics port), and a `log_level` that is now honoured.
+- New metrics: ledger append latency and failures, replay outcomes, policy reloads, active policy version, build info.
+- Release workflow: multi-arch images on GHCR, cosign keyless signing, SPDX SBOM, SLSA provenance, packaged Helm chart. CI adds image build plus Trivy scan, Helm lint, pinned OPA, and Dependabot.
+- `SECURITY.md`, `docs/DEPLOYMENT.md`.
 
 ## [1.1.0] - 2026-09-09
 

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/austinchima/kiterail/internal/auth"
 	"github.com/austinchima/kiterail/internal/mcp"
 	"github.com/austinchima/kiterail/internal/opaengine"
 	"github.com/austinchima/kiterail/internal/types"
@@ -40,6 +41,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleSimulate(w, r)
 		return
 	}
+	if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/reload") {
+		h.handleReload(w, r)
+		return
+	}
 
 	switch r.Method {
 	case http.MethodGet:
@@ -63,7 +68,38 @@ func (h *Handler) handleList(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Elodea-Policy-Version", h.engine.Version())
 	json.NewEncoder(w).Encode(policies)
+}
+
+// handleReload recompiles the policy directory (admin only). Policies still
+// change only through version control; this applies what was deployed. A
+// bundle that fails to compile is rejected and the previous one stays active.
+func (h *Handler) handleReload(w http.ResponseWriter, r *http.Request) {
+	identity, ok := auth.FromContext(r.Context())
+	if !ok || identity.Role != auth.RoleAdmin {
+		http.Error(w, `{"error": "admin role required"}`, http.StatusForbidden)
+		return
+	}
+	previous := h.engine.Version()
+	w.Header().Set("Content-Type", "application/json")
+	if err := h.engine.Reload(r.Context()); err != nil {
+		h.logger.Error("policy reload rejected", zap.String("admin", identity.ID), zap.Error(err))
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		json.NewEncoder(w).Encode(map[string]any{
+			"error":          "policy bundle rejected; previous policy remains active",
+			"detail":         err.Error(),
+			"policy_version": previous,
+		})
+		return
+	}
+	h.logger.Info("policy reloaded by admin", zap.String("admin", identity.ID),
+		zap.String("previous_version", previous), zap.String("policy_version", h.engine.Version()))
+	json.NewEncoder(w).Encode(map[string]any{
+		"policy_version":   h.engine.Version(),
+		"previous_version": previous,
+		"ready":            h.engine.Ready(),
+	})
 }
 
 func (h *Handler) handleSimulate(w http.ResponseWriter, r *http.Request) {

@@ -1,0 +1,9 @@
+Elodea {{ .Chart.AppVersion }} is deployed as {{ include "elodea.fullname" . }}.
+
+Agents call:     http://{{ include "elodea.fullname" . }}.{{ .Release.Namespace }}:{{ .Values.service.port }}/
+Reviewer API:    http://{{ include "elodea.fullname" . }}.{{ .Release.Namespace }}:{{ .Values.service.port }}/api/v1/
+Metrics:         http://{{ include "elodea.fullname" . }}-metrics.{{ .Release.Namespace }}:{{ .Values.metrics.port }}/metrics
+
+Anchor the audit-ledger head externally on a schedule (e.g. a CronJob writing
+GET /api/v1/ledger/head to object-locked storage), then verify against it:
+  GET /api/v1/ledger/verify?anchor_seq=<seq>&anchor_hash=<hash>

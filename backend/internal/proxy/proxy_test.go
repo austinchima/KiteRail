@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/austinchima/kiterail/internal/auth"
 	"github.com/austinchima/kiterail/internal/db"
@@ -58,18 +61,20 @@ type MockQuarantineStore struct {
 		Tool    string
 		Payload []byte
 		Headers http.Header
+		Rule    string
 	}
 	ReturnID string
 	Err      error
 }
 
-func (m *MockQuarantineStore) Create(ctx context.Context, agentID, toolName string, payload []byte, headers http.Header) (string, error) {
+func (m *MockQuarantineStore) Create(ctx context.Context, agentID, toolName string, payload []byte, headers http.Header, rule, explanation string) (string, error) {
 	m.CreatedItems = append(m.CreatedItems, struct {
 		AgentID string
 		Tool    string
 		Payload []byte
 		Headers http.Header
-	}{agentID, toolName, payload, headers})
+		Rule    string
+	}{agentID, toolName, payload, headers, rule})
 	return m.ReturnID, m.Err
 }
 
@@ -144,6 +149,72 @@ func TestServeHTTP_Allow(t *testing.T) {
 
 	assert.Len(t, lStore.Entries, 1)
 	assert.Equal(t, "allow", lStore.Entries[0].Decision)
+}
+
+// The agent must not steer the upstream path or query: policy only sees the
+// body, so ALLOW forwards to exactly the configured target URL.
+func TestServeHTTP_Allow_PinsUpstreamPathAndQuery(t *testing.T) {
+	var gotPath, gotQuery string
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotQuery = r.URL.Path, r.URL.RawQuery
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+
+	engine := &MockOPAEngine{Decision: ProxyDecision{Action: types.ActionAllow, Rule: "allow_all"}}
+	handler, err := NewHandler(zap.NewNop(), backend.URL+"/mcp", engine,
+		&MockEventPublisher{}, &MockQuarantineStore{}, &MockLedgerStore{})
+	require.NoError(t, err)
+
+	body := []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"get_balance"}}`)
+	req := httptest.NewRequest(http.MethodPost, "/admin/wire_transfer?amount=1000000", bytes.NewReader(body))
+	req = req.WithContext(agentCtx(req.Context(), "agent_1"))
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code)
+	assert.Equal(t, "/mcp", gotPath)
+	assert.Empty(t, gotQuery)
+}
+
+// Agents must not forge Elodea execution metadata or leak their own
+// credentials upstream; the proxy asserts the agent identity itself.
+func TestServeHTTP_Allow_StripsAgentControlledHeaders(t *testing.T) {
+	var got http.Header
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Clone()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+
+	engine := &MockOPAEngine{Decision: ProxyDecision{Action: types.ActionAllow, Rule: "allow_all"}}
+	handler, err := NewHandler(zap.NewNop(), backend.URL, engine,
+		&MockEventPublisher{}, &MockQuarantineStore{}, &MockLedgerStore{})
+	require.NoError(t, err)
+
+	body := []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"get_balance"}}`)
+	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
+	req.Header.Set("X-Elodea-Approved-By", "reviewer-jane")
+	req.Header.Set("X-Elodea-Agent", "someone-else")
+	req.Header.Set("X-Elodea-Quarantine-ID", "forged")
+	req.Header.Set("X-KiteRail-Approved-By", "reviewer-jane") // pre-rename name
+	req.Header.Set("Idempotency-Key", "kiterail-quarantine-forged")
+	req.Header.Set("Cookie", "session=secret")
+	req.Header.Set("Proxy-Authorization", "Basic secret")
+	req.Header.Set("Mcp-Method", "tools/call")
+	req = req.WithContext(agentCtx(req.Context(), "agent_1"))
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code)
+	assert.Empty(t, got.Get("X-Elodea-Approved-By"))
+	assert.Empty(t, got.Get("X-Elodea-Quarantine-ID"))
+	assert.Empty(t, got.Get("X-KiteRail-Approved-By"))
+	assert.Empty(t, got.Get("Idempotency-Key"))
+	assert.Empty(t, got.Get("Cookie"))
+	assert.Empty(t, got.Get("Proxy-Authorization"))
+	assert.Equal(t, "agent_1", got.Get("X-Elodea-Agent"))
+	assert.Equal(t, "tools/call", got.Get("Mcp-Method"), "protocol headers still ride through")
 }
 
 func TestServeHTTP_Deny(t *testing.T) {
@@ -227,6 +298,7 @@ func TestServeHTTP_Quarantine(t *testing.T) {
 	assert.Len(t, qStore.CreatedItems, 1)
 	assert.Equal(t, "agent_3", qStore.CreatedItems[0].AgentID)
 	assert.Equal(t, "suspicious_tool", qStore.CreatedItems[0].Tool)
+	assert.Equal(t, lStore.Entries[0].PolicyRule, qStore.CreatedItems[0].Rule, "the held item records the rule that held it")
 }
 
 // --- Fail-closed ingress (#2) ---
@@ -796,4 +868,127 @@ func TestServeHTTP_DuplicateMcpHeaderRejectedBeforePolicy(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, recorder.Code)
 	assert.Empty(t, engine.Input.Tool)
+}
+
+// MCP clients that declare a protocol version get protocol-native outcomes:
+// the model sees why its tool call did not run instead of a transport error.
+func TestServeHTTP_NativeMCPOutcomes(t *testing.T) {
+	cases := []struct {
+		name     string
+		action   types.Action
+		method   string
+		wantMeta string
+	}{
+		{"deny tools/call", types.ActionDeny, "tools/call", "deny"},
+		{"quarantine tools/call", types.ActionQuarantine, "tools/call", "quarantine"},
+		{"deny other method", types.ActionDeny, "resources/read", "deny"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			engine := &MockOPAEngine{Decision: ProxyDecision{Action: tc.action, Rule: "r1", Explanation: "because", PolicyVersion: "sha256:abc"}}
+			handler, err := NewHandler(zap.NewNop(), "http://127.0.0.1:1", engine,
+				&MockEventPublisher{}, &MockQuarantineStore{ReturnID: "q-9"}, &MockLedgerStore{})
+			require.NoError(t, err)
+
+			params := `{"name":"wire"}`
+			if tc.method == "resources/read" {
+				params = `{"uri":"file:///x"}`
+			}
+			body := []byte(`{"jsonrpc":"2.0","id":7,"method":"` + tc.method + `","params":` + params + `}`)
+			req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
+			req.Header.Set("MCP-Protocol-Version", "2026-07-28")
+			req = req.WithContext(agentCtx(req.Context(), "agent_1"))
+			rr := httptest.NewRecorder()
+			handler.ServeHTTP(rr, req)
+
+			require.Equal(t, http.StatusOK, rr.Code)
+			assert.Equal(t, tc.wantMeta, rr.Header().Get("X-Elodea-Decision"))
+			assert.Equal(t, "sha256:abc", rr.Header().Get("X-Elodea-Policy-Version"))
+			var resp map[string]any
+			require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &resp))
+			assert.Equal(t, "2.0", resp["jsonrpc"])
+			assert.EqualValues(t, 7, resp["id"])
+			if tc.method == "tools/call" {
+				result := resp["result"].(map[string]any)
+				assert.Equal(t, true, result["isError"])
+				meta := result["_meta"].(map[string]any)["elodea/decision"].(map[string]any)
+				assert.Equal(t, tc.wantMeta, meta["decision"])
+				if tc.action == types.ActionQuarantine {
+					assert.Equal(t, "q-9", meta["quarantine_id"])
+				}
+			} else {
+				rpcErr := resp["error"].(map[string]any)
+				assert.EqualValues(t, codeDeniedByPolicy, rpcErr["code"])
+			}
+		})
+	}
+}
+
+func TestServeHTTP_PolicyInputCarriesProtocol(t *testing.T) {
+	engine := &MockOPAEngine{Decision: ProxyDecision{Action: types.ActionDeny, Rule: "r"}}
+	handler, err := NewHandler(zap.NewNop(), "http://127.0.0.1:1", engine,
+		&MockEventPublisher{}, &MockQuarantineStore{}, &MockLedgerStore{})
+	require.NoError(t, err)
+	body := []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"t"}}`)
+	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
+	req.Header.Set("MCP-Protocol-Version", "2025-06-18")
+	req = req.WithContext(agentCtx(req.Context(), "agent_1"))
+	handler.ServeHTTP(httptest.NewRecorder(), req)
+	assert.Equal(t, "mcp", engine.Input.Protocol)
+	assert.Equal(t, "2025-06-18", engine.Input.ProtocolVersion)
+}
+
+func TestNewPolicyRecheck_ReparsesStoredRequestAsOriginalAgent(t *testing.T) {
+	engine := &MockOPAEngine{Decision: ProxyDecision{Action: types.ActionDeny, Rule: "now_denied"}}
+	recheck := NewPolicyRecheck(MCPAdapter{}, engine)
+	headers := http.Header{}
+	headers.Set("MCP-Protocol-Version", "2026-07-28")
+	payload := []byte(`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"swift.wire.initiate","arguments":{"amount":5}}}`)
+
+	decision, err := recheck(context.Background(), "agent-9", payload, headers)
+	require.NoError(t, err)
+	assert.Equal(t, "now_denied", decision.Rule)
+	assert.Equal(t, "agent-9", engine.Input.Agent)
+	assert.Equal(t, "swift.wire.initiate", engine.Input.Tool)
+	assert.Equal(t, "tools/call", engine.Input.RawMethod)
+	assert.Equal(t, "2026-07-28", engine.Input.ProtocolVersion)
+
+	_, err = recheck(context.Background(), "agent-9", []byte(`not json`), http.Header{})
+	require.Error(t, err)
+}
+
+// A streamed tool result (SSE) must not be cut off by the server-wide
+// WriteTimeout once the upstream has started responding.
+func TestServeHTTP_Allow_StreamOutlivesWriteTimeout(t *testing.T) {
+	const events = 6
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		for i := range events {
+			_, _ = fmt.Fprintf(w, "data: chunk-%d%s", i, strings.Repeat(string(rune(10)), 2))
+			w.(http.Flusher).Flush()
+			time.Sleep(80 * time.Millisecond)
+		}
+	}))
+	defer upstream.Close()
+
+	engine := &MockOPAEngine{Decision: ProxyDecision{Action: types.ActionAllow, Rule: "allow_all"}}
+	handler, err := NewHandler(zap.NewNop(), upstream.URL, engine,
+		&MockEventPublisher{}, &MockQuarantineStore{}, &MockLedgerStore{})
+	require.NoError(t, err)
+
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handler.ServeHTTP(w, r.WithContext(agentCtx(r.Context(), "agent_1")))
+	}))
+	srv.Config.WriteTimeout = 200 * time.Millisecond // far shorter than the stream
+	srv.Start()
+	defer srv.Close()
+
+	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"report.generate"}}`
+	resp, err := http.Post(srv.URL, "application/json", strings.NewReader(body))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	got, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	assert.Equal(t, events, strings.Count(string(got), "data: chunk-"), "stream truncated: %q", got)
 }
