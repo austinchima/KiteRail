@@ -15,8 +15,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 
-	"github.com/austinchima/kiterail/internal/quarantine"
-	"github.com/austinchima/kiterail/internal/slackapp"
+	"github.com/austinchima/elodea/internal/quarantine"
+	"github.com/austinchima/elodea/internal/slackapp"
 )
 
 // TestE2E_SlackApprovalIsAuditedUnderTheReviewersEmail: a signed Slack button

@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"sync/atomic"
 
-	"github.com/austinchima/kiterail/internal/db"
+	"github.com/austinchima/elodea/internal/db"
 	"go.uber.org/zap"
 )
 

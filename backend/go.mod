@@ -1,4 +1,4 @@
-module github.com/austinchima/kiterail
+module github.com/austinchima/elodea
 
 go 1.26.6
 

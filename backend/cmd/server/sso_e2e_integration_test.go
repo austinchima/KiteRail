@@ -15,10 +15,10 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 
-	"github.com/austinchima/kiterail/internal/auth"
-	"github.com/austinchima/kiterail/internal/config"
-	"github.com/austinchima/kiterail/internal/db"
-	"github.com/austinchima/kiterail/internal/sso"
+	"github.com/austinchima/elodea/internal/auth"
+	"github.com/austinchima/elodea/internal/config"
+	"github.com/austinchima/elodea/internal/db"
+	"github.com/austinchima/elodea/internal/sso"
 )
 
 // TestE2E_SSOReviewerApprovalIsAttributedToTheirEmail drives a held action

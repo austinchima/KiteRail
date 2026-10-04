@@ -21,9 +21,9 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 
-	"github.com/austinchima/kiterail/internal/auth"
-	"github.com/austinchima/kiterail/internal/config"
-	"github.com/austinchima/kiterail/internal/db"
+	"github.com/austinchima/elodea/internal/auth"
+	"github.com/austinchima/elodea/internal/config"
+	"github.com/austinchima/elodea/internal/db"
 )
 
 const (

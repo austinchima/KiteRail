@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/austinchima/kiterail/internal/db"
-	"github.com/austinchima/kiterail/internal/dbtest"
+	"github.com/austinchima/elodea/internal/db"
+	"github.com/austinchima/elodea/internal/dbtest"
 	"github.com/stretchr/testify/require"
 )
 

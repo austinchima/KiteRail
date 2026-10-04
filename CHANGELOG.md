@@ -27,6 +27,7 @@ Ships as **2.0.0**: the rename changes header, metric, and policy-package names 
 - Slack notifications escape agent-supplied text in the message preview as well as the body, so a tool name cannot trigger `@channel`.
 
 ### Changed
+- **Repository and Go module renamed** to `github.com/austinchima/elodea`. GitHub redirects the old `austinchima/KiteRail` URLs. Release images are signed with the new repository identity; see `SECURITY.md`.
 - **Renamed from KiteRail to Elodea.** Product name, binary (`/usr/local/bin/elodea`), container image (`ghcr.io/<owner>/elodea`), Helm chart (`deploy/helm/elodea`), example config (`backend/elodea.example.yaml`), console, and docs.
 - **Environment variables are now `ELODEA_*`.** `KITERAIL_*` names still work: each is applied when its `ELODEA_*` counterpart is unset, and startup logs a deprecation warning listing them.
 - **Headers are now `X-Elodea-*`** (`Agent`, `Quarantine-ID`, `Approved-By`, `Decision`, `Policy-Version`). Upstreams that read `X-KiteRail-*` must switch. Inbound `X-KiteRail-*` headers are still stripped from agent requests, so they cannot be spoofed.
@@ -38,7 +39,6 @@ Ships as **2.0.0**: the rename changes header, metric, and policy-package names 
 ### Unchanged on purpose
 - The replay `Idempotency-Key` prefix stays `kiterail-quarantine-<id>`, because upstreams deduplicate on it and a replay that straddles the upgrade must not execute twice.
 - Applied database migrations, the `kiterail.ledger_maintenance` setting, and the ledger trigger names are unchanged.
-- The Go module path and repository URL stay `github.com/austinchima/kiterail` until the repository itself is renamed.
 
 ## [1.2.0] - not released separately (ships in 2.0.0)
 
@@ -284,10 +284,10 @@ ledger, or review.
 - Apache 2.0 license
 - Production README with architecture diagram, quickstart, and policy authoring guide
 
-[Unreleased]: https://github.com/austinchima/KiteRail/compare/v1.1.0...HEAD
-[1.1.0]: https://github.com/austinchima/KiteRail/compare/v1.0.0...v1.1.0
-[1.1.0-beta.1]: https://github.com/austinchima/KiteRail/compare/v1.1.0-alpha...v1.1.0-beta.1
-[1.1.0-alpha]: https://github.com/austinchima/KiteRail/compare/v1.0.0...v1.1.0-alpha
-[1.0.0]: https://github.com/austinchima/KiteRail/compare/v0.2.0...v1.0.0
-[0.2.0]: https://github.com/austinchima/KiteRail/compare/v0.1.0...v0.2.0
-[0.1.0]: https://github.com/austinchima/KiteRail/releases/tag/v0.1.0
+[Unreleased]: https://github.com/austinchima/elodea/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/austinchima/elodea/compare/v1.0.0...v1.1.0
+[1.1.0-beta.1]: https://github.com/austinchima/elodea/compare/v1.1.0-alpha...v1.1.0-beta.1
+[1.1.0-alpha]: https://github.com/austinchima/elodea/compare/v1.0.0...v1.1.0-alpha
+[1.0.0]: https://github.com/austinchima/elodea/compare/v0.2.0...v1.0.0
+[0.2.0]: https://github.com/austinchima/elodea/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/austinchima/elodea/releases/tag/v0.1.0

@@ -19,11 +19,11 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/austinchima/kiterail/internal/auth"
-	"github.com/austinchima/kiterail/internal/db"
-	"github.com/austinchima/kiterail/internal/mcp"
-	"github.com/austinchima/kiterail/internal/metrics"
-	"github.com/austinchima/kiterail/internal/types"
+	"github.com/austinchima/elodea/internal/auth"
+	"github.com/austinchima/elodea/internal/db"
+	"github.com/austinchima/elodea/internal/mcp"
+	"github.com/austinchima/elodea/internal/metrics"
+	"github.com/austinchima/elodea/internal/types"
 )
 
 // JSON-RPC error codes emitted by the proxy's own ingress validation.
