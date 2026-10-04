@@ -15,7 +15,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/austinchima/kiterail/internal/db"
+	"github.com/austinchima/elodea/internal/db"
 	_ "github.com/lib/pq"
 	"github.com/stretchr/testify/require"
 )

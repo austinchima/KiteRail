@@ -21,7 +21,7 @@ FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c
 ARG VERSION=dev
 LABEL org.opencontainers.image.title="Elodea" \
       org.opencontainers.image.description="Inline policy enforcement proxy for autonomous AI agents" \
-      org.opencontainers.image.source="https://github.com/austinchima/KiteRail" \
+      org.opencontainers.image.source="https://github.com/austinchima/elodea" \
       org.opencontainers.image.licenses="Apache-2.0" \
       org.opencontainers.image.version="${VERSION}"
 

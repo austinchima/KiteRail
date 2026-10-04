@@ -20,63 +20,64 @@ Elodea targets fintech tool-call governance (like refunds and wire transfers) ou
 ```mermaid
 flowchart TB
     subgraph Client["🤖 Agent Plane"]
-        A[Autonomous AI Agent<br/>JSON-RPC / MCP caller]
-    end
-
-    subgraph Ingress["🔐 Ingress Middleware"]
-        M[HTTP Middleware<br/>metrics · CORS · bearer token / SSO session]
-    end
-
-    subgraph Control["⚙️ Control Plane · Request + Review"]
-        direction TB
-        P[MCP Interceptor<br/>validate · evaluate · route]
-        E[[OPA Policy Engine<br/>compiled Rego · RWMutex]]
-        API[Reviewer/Admin REST API<br/>HITL · audit · policy simulation]
-        PS[(Policy Store<br/>versioned Rego bundle)]
-
-        P -- EvalInput --> E
-        E -- Decision · allow / deny / quarantine --> P
-        API -- dry-run EvalInput --> E
-        PS -. compile + hot reload .-> E
-        API -. list policies .-> PS
-    end
-
-    subgraph Replay["♻️ Control Plane · Replay"]
-        W[Durable Replay Worker<br/>replay · retry · audit]
-    end
-
-    subgraph Data["📒 Data Plane · PostgreSQL"]
-        direction LR
-        L[(Audit Ledger<br/>hash-chain · serial retry ×3)]
-        Q[(Quarantine Store<br/>payload + replay state)]
+        A[Autonomous AI Agent<br/>MCP client · bearer token]
     end
 
     subgraph Human["👤 Human Plane"]
         direction TB
-        N[Notifier<br/>Slack · signed webhook]
-        UI[Reviewer console<br/>HITL inbox · ledger · SSO]
-        REV[Human Reviewer<br/>approve · deny]
-        N -- held action --> REV
-        REV -- review interaction --> UI
+        UI[Reviewer console<br/>inbox · audit log · policies]
+        IDP[Identity provider<br/>OIDC SSO · groups → roles]
+        SL[Slack · webhooks<br/>held-action alerts · Approve / Deny]
+        UI -. sign in .-> IDP
+    end
+
+    subgraph Ingress["🔐 Ingress Middleware"]
+        M[HTTP Middleware<br/>CORS · token or SSO session · CSRF]
+    end
+
+    subgraph Control["⚙️ Control Plane"]
+        direction TB
+        P[MCP Proxy<br/>validate · decide · route]
+        E[[OPA Policy Engine<br/>allow · deny · hold]]
+        API[Reviewer API<br/>approve · deny · simulate]
+        PS[(Policy Bundle<br/>versioned Rego · hot reload)]
+        W[Replay Worker<br/>re-check · write-ahead · run once]
+        N[Notifier<br/>outbox · retries · signed]
+
+        P -- evaluate --> E
+        PS -. hot reload .-> E
+        API -. dry run .-> E
+        W -- re-check current policy --> E
+    end
+
+    subgraph Data["📒 Data Plane · PostgreSQL"]
+        direction LR
+        L[(Audit Ledger<br/>hash chain · append-only · anchorable)]
+        Q[(Held Actions<br/>payloads · notification outbox)]
     end
 
     subgraph Upstream["🎯 Target Plane"]
-        T[Downstream API<br/>downstream service]
+        T[Upstream Tool Server<br/>the one configured target]
     end
 
     A -- JSON-RPC / MCP --> M
-    UI -- reviewer/admin REST request --> M
-    M -- POST / · agent route --> P
-    M -- /api/v1/* · human route + role guard --> API
+    UI -- REST · session cookie --> M
+    SL -- Slack-signed click --> M
+    M -- POST / · agents only --> P
+    M -- /api/v1 · reviewers only --> API
+    API -. verify ID token .-> IDP
 
-    P -- append decision before routing · fail closed --> L
+    P -- record decision first · fail closed --> L
     P -- ALLOW · forward --> T
-    P -- QUARANTINE · create pending item --> Q
+    P -- HOLD · store payload --> Q
 
-    API -- list + approve / deny --> Q
-    W -- claim / status --> Q
-    W -- replay approved payload · Idempotency-Key --> T
+    API -- approve / deny --> Q
+    API -- record decision --> L
+    W -- claim approved --> Q
+    W -- write-ahead + outcome --> L
+    W -- replay once · Idempotency-Key --> T
     Q -. outbox .-> N
+    N -- held action --> SL
 
     classDef control fill:#1e293b,stroke:#38bdf8,color:#e2e8f0,stroke-width:2px
     classDef data fill:#0f172a,stroke:#a78bfa,color:#e2e8f0,stroke-width:2px
@@ -85,13 +86,15 @@ flowchart TB
     classDef upstream fill:#1e1b4b,stroke:#a5b4fc,color:#e0e7ff,stroke-width:2px
     classDef agent fill:#450a0a,stroke:#f87171,color:#fee2e2,stroke-width:2px
 
-    class P,E,API,PS,W control
+    class P,E,API,PS,W,N control
     class L,Q data
-    class UI,REV,N human
+    class UI,IDP,SL human
     class M ingress
     class T upstream
     class A agent
 ```
+
+An interactive version, with every box linked to the source file that implements it, is in [docs/diagrams/architecture-interactive.html](docs/diagrams/architecture-interactive.html).
 
 ## Features
 
@@ -117,7 +120,7 @@ Agent protocols are moving fast: MCP revisions, agent-to-agent protocols, vendor
 
 ```bash
 # Clone the repository
-git clone https://github.com/austinchima/KiteRail.git elodea
+git clone https://github.com/austinchima/elodea.git
 cd elodea
 
 # Start all services (proxy + Postgres)
@@ -161,7 +164,7 @@ See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for secrets, policy delivery, ledge
 
 The reviewer dashboard (HITL inbox and audit ledger) is part of Elodea Cloud and is developed separately. It doesn't ship in this repository. Everything it does goes through the documented reviewer API ([docs/API.md](docs/API.md)), so you can build your own console, or drive reviews from Slack or a ticketing system, with the same guarantees.
 
-Interested in piloting Elodea on real agent workflows? I am looking for design partners in fintech or agent-DevOps. Open a [GitHub Discussion](https://github.com/austinchima/KiteRail/discussions).
+Interested in piloting Elodea on real agent workflows? I am looking for design partners in fintech or agent-DevOps. Open a [GitHub Discussion](https://github.com/austinchima/elodea/discussions).
 
 ## Writing Policies
 

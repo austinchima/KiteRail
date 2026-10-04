@@ -9,8 +9,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/austinchima/kiterail/internal/db"
-	"github.com/austinchima/kiterail/internal/dbtest"
+	"github.com/austinchima/elodea/internal/db"
+	"github.com/austinchima/elodea/internal/dbtest"
 )
 
 // TestSessionQueries_Postgres checks the SQL behind the in-memory store used

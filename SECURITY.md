@@ -12,7 +12,7 @@
 
 Please **do not** open a public issue. Use GitHub's private vulnerability
 reporting ("Security" tab → "Report a vulnerability") on
-`austinchima/KiteRail` (the repository keeps its original name). You will get an acknowledgement within 3 business
+`austinchima/elodea`. You will get an acknowledgement within 3 business
 days and a fix or mitigation plan within 30 days for confirmed issues.
 
 ## Security model (summary)
@@ -51,6 +51,6 @@ Verify a release image:
 
 ```bash
 cosign verify ghcr.io/austinchima/elodea:<version> \
-  --certificate-identity-regexp 'https://github.com/austinchima/KiteRail/' \
+  --certificate-identity-regexp 'https://github.com/austinchima/elodea/' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```

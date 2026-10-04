@@ -30,9 +30,9 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/oauth2"
 
-	"github.com/austinchima/kiterail/internal/auth"
-	"github.com/austinchima/kiterail/internal/config"
-	"github.com/austinchima/kiterail/internal/db"
+	"github.com/austinchima/elodea/internal/auth"
+	"github.com/austinchima/elodea/internal/config"
+	"github.com/austinchima/elodea/internal/db"
 )
 
 // Store is the persistence the sign-in flow needs; *db.Queries implements it.

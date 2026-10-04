@@ -4,7 +4,7 @@ description: Inline policy enforcement proxy for autonomous AI agents (OPA polic
 type: application
 version: 2.0.0-dev
 appVersion: "2.0.0-dev"
-home: https://github.com/austinchima/KiteRail
+home: https://github.com/austinchima/elodea
 sources:
-  - https://github.com/austinchima/KiteRail
+  - https://github.com/austinchima/elodea
 keywords: [ai-agents, mcp, opa, policy, audit, governance, human-in-the-loop]

@@ -9,10 +9,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/austinchima/kiterail/internal/auth"
-	"github.com/austinchima/kiterail/internal/mcp"
-	"github.com/austinchima/kiterail/internal/opaengine"
-	"github.com/austinchima/kiterail/internal/types"
+	"github.com/austinchima/elodea/internal/auth"
+	"github.com/austinchima/elodea/internal/mcp"
+	"github.com/austinchima/elodea/internal/opaengine"
+	"github.com/austinchima/elodea/internal/types"
 	"go.uber.org/zap"
 )
 

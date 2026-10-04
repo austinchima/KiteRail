@@ -17,11 +17,11 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 
-	"github.com/austinchima/kiterail/internal/auth"
-	"github.com/austinchima/kiterail/internal/db"
-	"github.com/austinchima/kiterail/internal/proxy"
-	"github.com/austinchima/kiterail/internal/quarantine"
-	"github.com/austinchima/kiterail/internal/types"
+	"github.com/austinchima/elodea/internal/auth"
+	"github.com/austinchima/elodea/internal/db"
+	"github.com/austinchima/elodea/internal/proxy"
+	"github.com/austinchima/elodea/internal/quarantine"
+	"github.com/austinchima/elodea/internal/types"
 )
 
 const (

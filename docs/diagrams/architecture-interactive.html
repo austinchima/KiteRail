@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="generator" content="archify 2.15.0">
-  <title>Elodea — Complete System Architecture Diagram</title>
+  <title>Elodea Verified Runtime Flow Diagram</title>
   <script>
     // Resolve the theme before first paint so light-preference users don't
     // see a dark flash. The toolbar script below re-applies with UI state.
@@ -4945,12 +4945,12 @@
     <div class="header">
       <div class="header-row">
         <div class="pulse-dot"></div>
-        <h1>Elodea — Complete System Architecture</h1>
+        <h1>Elodea Verified Runtime Flow</h1>
       </div>
     </div>
 
-    <script id="archify-guided-views-data" type="application/json">[{"id":"agent-allow","label":"1 — Agent Allow Path","focus":["agent","auth","ratelimit","proxy","opa","ledger","target"],"note":"Bearer → role=agent → rate bucket → JSON-RPC validated → OPA eval → ALLOW → ledger (SERIALIZABLE) → token swap → upstream."},{"id":"agent-deny","label":"2 — Agent Deny Path","focus":["agent","auth","ratelimit","proxy","opa","ledger","denied"],"note":"OPA returns deny (policy_eval_error or default_deny) → ledger appended → HTTP 403 returned to agent. Target is never contacted."},{"id":"quarantine-flow","label":"3 — Quarantine \u0026 HITL Review","focus":["agent","proxy","opa","quarantine","ledger","reviewer","dashboard","restapi","worker","target"],"note":"OPA quarantine → payload in DB → reviewer approves via API → Worker claims batch → replay w/ target credential → outcome to ledger."}]</script>
-
+    <script id="archify-guided-views-data" type="application/json">[]</script>
+    <script id="archify-source-evidence-data" type="application/json">{"schemaVersion":1,"verified":true,"repository":{"url":"https://github.com/austinchima/elodea","revision":"bc4a7f6c9ed0f08f452d0be4d8b556754ac1dbaf","shortRevision":"bc4a7f6"},"referenceCount":16,"nodes":{"agent":[{"path":"backend/internal/proxy/adapter.go","label":"MCP adapter","href":"https://github.com/austinchima/elodea/blob/bc4a7f6c9ed0f08f452d0be4d8b556754ac1dbaf/backend/internal/proxy/adapter.go"}],"idp":[{"path":"backend/internal/sso/sso.go","label":"SSO sign-in","href":"https://github.com/austinchima/elodea/blob/bc4a7f6c9ed0f08f452d0be4d8b556754ac1dbaf/backend/internal/sso/sso.go"}],"ingress":[{"path":"backend/cmd/server/main.go","label":"Trust-domain chains","href":"https://github.com/austinchima/elodea/blob/bc4a7f6c9ed0f08f452d0be4d8b556754ac1dbaf/backend/cmd/server/main.go"},{"path":"backend/internal/auth/auth.go","label":"Auth + CSRF","href":"https://github.com/austinchima/elodea/blob/bc4a7f6c9ed0f08f452d0be4d8b556754ac1dbaf/backend/internal/auth/auth.go"}],"human-api":[{"path":"backend/internal/quarantine/handler.go","label":"Approve / Deny","href":"https://github.com/austinchima/elodea/blob/bc4a7f6c9ed0f08f452d0be4d8b556754ac1dbaf/backend/internal/quarantine/handler.go"},{"path":"backend/internal/slackapp/slackapp.go","label":"Slack clicks","href":"https://github.com/austinchima/elodea/blob/bc4a7f6c9ed0f08f452d0be4d8b556754ac1dbaf/backend/internal/slackapp/slackapp.go"}],"proxy":[{"path":"backend/internal/proxy/proxy.go","label":"Inline request path","href":"https://github.com/austinchima/elodea/blob/bc4a7f6c9ed0f08f452d0be4d8b556754ac1dbaf/backend/internal/proxy/proxy.go"}],"policy":[{"path":"backend/internal/opaengine/engine.go","label":"Reload + fingerprint","href":"https://github.com/austinchima/elodea/blob/bc4a7f6c9ed0f08f452d0be4d8b556754ac1dbaf/backend/internal/opaengine/engine.go"}],"opa":[{"path":"backend/internal/opaengine/engine.go","label":"Policy evaluation","href":"https://github.com/austinchima/elodea/blob/bc4a7f6c9ed0f08f452d0be4d8b556754ac1dbaf/backend/internal/opaengine/engine.go"}],"target":[{"path":"backend/internal/proxy/proxy.go","label":"Pinned upstream URL","href":"https://github.com/austinchima/elodea/blob/bc4a7f6c9ed0f08f452d0be4d8b556754ac1dbaf/backend/internal/proxy/proxy.go"}],"postgres":[{"path":"backend/internal/ledger/ledger.go","label":"Hash-chained ledger","href":"https://github.com/austinchima/elodea/blob/bc4a7f6c9ed0f08f452d0be4d8b556754ac1dbaf/backend/internal/ledger/ledger.go"},{"path":"backend/internal/quarantine/store.go","label":"Held actions","href":"https://github.com/austinchima/elodea/blob/bc4a7f6c9ed0f08f452d0be4d8b556754ac1dbaf/backend/internal/quarantine/store.go"},{"path":"backend/sql/notify.sql","label":"Notification outbox","href":"https://github.com/austinchima/elodea/blob/bc4a7f6c9ed0f08f452d0be4d8b556754ac1dbaf/backend/sql/notify.sql"}],"worker":[{"path":"backend/internal/quarantine/worker.go","label":"Durable replay","href":"https://github.com/austinchima/elodea/blob/bc4a7f6c9ed0f08f452d0be4d8b556754ac1dbaf/backend/internal/quarantine/worker.go"}],"notifier":[{"path":"backend/internal/notify/notify.go","label":"Outbox worker","href":"https://github.com/austinchima/elodea/blob/bc4a7f6c9ed0f08f452d0be4d8b556754ac1dbaf/backend/internal/notify/notify.go"}],"slack":[{"path":"backend/internal/slackapp/slackapp.go","label":"Slack app","href":"https://github.com/austinchima/elodea/blob/bc4a7f6c9ed0f08f452d0be4d8b556754ac1dbaf/backend/internal/slackapp/slackapp.go"}]}}</script>
     <div class="guided-views no-print" id="guided-views" hidden aria-label="Guided diagram views">
       <button id="guided-view-prev" type="button" aria-label="Previous guided view" title="Previous guided view ([)">&#8592;</button>
       <div class="guided-view-copy">
@@ -4992,8 +4992,8 @@
 
     <!-- Main Diagram -->
     <div class="diagram-container" data-detail-level="read">
-      <svg viewBox="0 0 1260 620" role="img" aria-labelledby="archify-diagram-title archify-diagram-description" data-preset="classic" data-quality-profile="standard">
-        <title id="archify-diagram-title">Elodea — Complete System Architecture</title>
+      <svg viewBox="0 0 1548 884" role="img" aria-labelledby="archify-diagram-title archify-diagram-description" data-preset="classic" data-quality-profile="standard">
+        <title id="archify-diagram-title">Elodea Verified Runtime Flow</title>
         <desc id="archify-diagram-description">A architecture diagram generated by Archify.</desc>
         <!-- Definitions -->
         <defs>
@@ -5018,294 +5018,321 @@
         <rect width="100%" height="100%" fill="url(#grid)" />
 
         <!-- Boundaries (behind everything) -->
-        <rect data-graph-role="structural-frame" data-composition-frame-kind="security-group" data-composition-frame-id="0" data-composition-frame-label="Data Plane (PostgreSQL)" x="826" y="276" width="178" height="240" rx="8" class="c-security-group" stroke-width="1"/>
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="region" data-composition-frame-id="0" data-composition-frame-label="Agent Plane" x="22" y="305" width="206" height="115" rx="12" class="c-region" stroke-width="1"/>
 
-        <rect data-graph-role="structural-frame" data-composition-frame-kind="region" data-composition-frame-id="1" data-composition-frame-label="Control Plane / Proxy" x="618" y="36" width="604" height="480" rx="12" class="c-region" stroke-width="1"/>
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="region" data-composition-frame-id="1" data-composition-frame-label="Human Plane" x="22" y="15" width="506" height="121" rx="12" class="c-region" stroke-width="1"/>
+
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="security-group" data-composition-frame-id="2" data-composition-frame-label="Ingress" x="312" y="295" width="236" height="129" rx="8" class="c-security-group" stroke-width="1"/>
+
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="security-group" data-composition-frame-id="3" data-composition-frame-label="Control Plane" x="622" y="15" width="566" height="409" rx="8" class="c-security-group" stroke-width="1"/>
+
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="region" data-composition-frame-id="4" data-composition-frame-label="Data Plane" x="622" y="545" width="266" height="129" rx="12" class="c-region" stroke-width="1"/>
+
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="region" data-composition-frame-id="5" data-composition-frame-label="Target Plane" x="1282" y="295" width="226" height="121" rx="12" class="c-region" stroke-width="1"/>
 
         <!-- Connection paths (before components for correct z-order) -->
-        <path data-edge-from="agent" data-edge-to="auth" data-edge-label="1. Bearer token" data-edge-key="0" data-composition-points="150,208;210,208" d="M 150 208 L 210 208" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path data-edge-from="auth" data-edge-to="ratelimit" data-edge-label="2. role=agent" data-edge-key="1" data-composition-points="360,208;420,208" d="M 360 208 L 420 208" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path data-edge-from="ratelimit" data-edge-to="proxy" data-edge-label="3. rate OK" data-edge-key="2" data-composition-points="570,215;630,215" d="M 570 215 L 630 215" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path data-edge-from="proxy" data-edge-to="opa" data-edge-label="4. Evaluate" data-edge-key="3" data-composition-points="705,180;705,156;816,156;816,88;840,88" d="M 705 180 L 705 164 Q 705 156 713 156 L 808 156 Q 816 156 816 148 L 816 96 Q 816 88 824 88 L 840 88" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
-        <path data-edge-from="opa" data-edge-to="policystore" data-edge-label="reads" data-edge-key="4" data-composition-points="990,88;1060,88" d="M 990 88 L 1060 88" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
-        <path data-edge-from="proxy" data-edge-to="ledger" data-edge-label="5. Append entry" data-edge-key="5" data-composition-points="780,201;810,201;810,328;840,328" d="M 780 201 L 802 201 Q 810 201 810 209 L 810 320 Q 810 328 818 328 L 840 328" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path data-edge-from="proxy" data-edge-to="target" data-edge-label="6a. ALLOW" data-edge-key="6" data-composition-points="780,215;1036,215;1036,328;1060,328" d="M 780 215 L 1028 215 Q 1036 215 1036 223 L 1036 320 Q 1036 328 1044 328 L 1060 328" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path data-edge-from="proxy" data-edge-to="denied" data-edge-label="6b. DENY" data-edge-key="7" data-composition-points="630,201;606,201;606,140;705,140;705,116" d="M 630 201 L 614 201 Q 606 201 606 193 L 606 148 Q 606 140 614 140 L 697 140 Q 705 140 705 132 L 705 116" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path data-edge-from="proxy" data-edge-to="quarantine" data-edge-label="6c. QUARANTINE" data-edge-key="8" data-composition-points="705,236;705,416;915,416;915,440" d="M 705 236 L 705 408 Q 705 416 713 416 L 907 416 Q 915 416 915 424 L 915 440" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
-        <path data-edge-from="reviewer" data-edge-to="dashboard" data-edge-label="uses" data-edge-key="9" data-composition-points="150,468;210,468" d="M 150 468 L 210 468" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
-        <path data-edge-from="dashboard" data-edge-to="restapi" data-edge-label="Bearer token (reviewer)" data-edge-key="10" data-composition-points="360,468;630,468" d="M 360 468 L 630 468" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
-        <path data-edge-from="restapi" data-edge-to="quarantine" data-edge-label="approve / update status" data-edge-key="11" data-composition-points="780,468;840,468" d="M 780 468 L 840 468" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
-        <path data-edge-from="restapi" data-edge-to="ledger" data-edge-label="reads / append review" data-edge-key="12" data-composition-points="705,440;705,398;915,398;915,356" d="M 705 440 L 705 406 Q 705 398 713 398 L 907 398 Q 915 398 915 390 L 915 356" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
-        <path data-edge-from="worker" data-edge-to="quarantine" data-edge-label="polls approved" data-edge-key="13" data-composition-points="1060,468;990,468" d="M 1060 468 L 990 468" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
-        <path data-edge-from="worker" data-edge-to="target" data-edge-label="replay request" data-edge-key="14" data-composition-points="1210,468;1234,468;1234,328;1210,328" d="M 1210 468 L 1226 468 Q 1234 468 1234 460 L 1234 336 Q 1234 328 1226 328 L 1210 328" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
-        <path data-edge-from="worker" data-edge-to="ledger" data-edge-label="record outcome" data-edge-key="15" data-composition-points="1135,440;1135,416;1014,416;1014,328;990,328" d="M 1135 440 L 1135 424 Q 1135 416 1127 416 L 1022 416 Q 1014 416 1014 408 L 1014 336 Q 1014 328 1006 328 L 990 328" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
+        <path data-edge-from="agent" data-edge-to="ingress" data-edge-label="JSON-RPC / MCP" data-edge-key="0" data-edge-id="agent-ingress" data-composition-points="210,369;330,369" d="M 210 369 L 330 369" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path data-edge-from="ingress" data-edge-to="proxy" data-edge-label="agents only" data-edge-key="1" data-edge-id="ingress-proxy" data-composition-points="530,369;640,369" d="M 530 369 L 640 369" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="reviewer" data-edge-to="idp" data-edge-label="sign in" data-edge-key="2" data-edge-id="reviewer-idp" data-composition-points="220,71;330,71" d="M 220 71 L 330 71" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
+        <path data-edge-from="reviewer" data-edge-to="ingress" data-edge-label="REST · session" data-edge-key="3" data-edge-id="reviewer-ingress" data-composition-points="220,85;275,85;275,355;330,355" d="M 220 85 L 267 85 Q 275 85 275 93 L 275 347 Q 275 355 283 355 L 330 355" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="ingress" data-edge-to="human-api" data-edge-label="reviewers only" data-edge-key="4" data-edge-id="ingress-human" data-composition-points="530,355;585,355;585,89;640,89" d="M 530 355 L 577 355 Q 585 355 585 347 L 585 97 Q 585 89 593 89 L 640 89" class="a-security" stroke-width="1.5" marker-end="url(#arrowhead-security)"/>
+        <path data-edge-from="human-api" data-edge-to="idp" data-edge-label="verify token" data-edge-key="5" data-edge-id="human-idp" data-composition-points="640,75;510,75" d="M 640 75 L 510 75" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
+        <path data-edge-from="proxy" data-edge-to="opa" data-edge-label="evaluate" data-edge-key="6" data-edge-id="proxy-opa" data-composition-points="830,355;905,355;905,228;980,228" d="M 830 355 L 897 355 Q 905 355 905 347 L 905 236 Q 905 228 913 228 L 980 228" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="policy" data-edge-to="opa" data-edge-label="hot reload" data-edge-key="7" data-edge-id="policy-opa" data-composition-points="1075,116;1075,190" d="M 1075 116 L 1075 190" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
+        <path data-edge-from="proxy" data-edge-to="target" data-edge-label="ALLOW · forward" data-edge-key="8" data-edge-id="proxy-target" data-composition-points="830,369;1300,369" d="M 830 369 L 1300 369" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path data-edge-from="proxy" data-edge-to="postgres" data-edge-label="record first · HOLD" data-edge-key="9" data-edge-id="proxy-postgres" data-composition-points="735,404;735,487;755,487;755,570" d="M 735 404 L 735 479 Q 735 487 743 487 L 747 487 Q 755 487 755 495 L 755 570" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path data-edge-from="human-api" data-edge-to="postgres" data-edge-label="approve / deny · ledgered" data-edge-key="10" data-edge-id="human-postgres" data-composition-points="830,82;920,82;920,612;870,612" d="M 830 82 L 912 82 Q 920 82 920 90 L 920 604 Q 920 612 912 612 L 870 612" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="worker" data-edge-to="postgres" data-edge-label="claim · write-ahead · outcome" data-edge-key="11" data-edge-id="worker-postgres" data-composition-points="1300,619;870,619" d="M 1300 619 L 870 619" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="worker" data-edge-to="opa" data-edge-label="re-check policy" data-edge-key="12" data-edge-id="worker-opa" data-composition-points="1300,605;1235,605;1235,228;1170,228" d="M 1300 605 L 1243 605 Q 1235 605 1235 597 L 1235 236 Q 1235 228 1227 228 L 1170 228" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="worker" data-edge-to="target" data-edge-label="replay once" data-edge-key="13" data-edge-id="worker-target" data-composition-points="1400,570;1400,546;1416,546;1416,420;1395,420;1395,396" d="M 1400 570 L 1400 554 Q 1400 546 1408 546 L 1408 546 Q 1416 546 1416 538 L 1416 428 Q 1416 420 1408 420 L 1403 420 Q 1395 420 1395 412 L 1395 396" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path data-edge-from="postgres" data-edge-to="notifier" data-edge-label="outbox" data-edge-key="14" data-edge-id="postgres-notifier" data-composition-points="755,654;755,697;735,697;735,740" d="M 755 654 L 755 689 Q 755 697 747 697 L 743 697 Q 735 697 735 705 L 735 740" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="notifier" data-edge-to="slack" data-edge-label="held action" data-edge-key="15" data-edge-id="notifier-slack" data-composition-points="640,778;520,778" d="M 640 778 L 520 778" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="slack" data-edge-to="ingress" data-edge-label="Slack-signed click" data-edge-key="16" data-edge-id="slack-ingress" data-composition-points="425,740;425,716;446,716;446,428;430,428;430,404" d="M 425 740 L 425 724 Q 425 716 433 716 L 438 716 Q 446 716 446 708 L 446 436 Q 446 428 438 428 L 438 428 Q 430 428 430 420 L 430 404" class="a-security" stroke-width="1.5" marker-end="url(#arrowhead-security)"/>
 
         <!-- Components -->
-        <g id="node-agent" data-node-id="agent" data-node-label="AI Agent" tabindex="0" role="button" aria-label="Focus AI Agent, JSON-RPC / MCP, Architecture component" aria-pressed="false" data-node-kind="external" data-node-sublabel="JSON-RPC / MCP" data-node-context="Architecture component">
-          <title>AI Agent · JSON-RPC / MCP · Architecture component</title>
-          <rect x="0" y="180" width="150" height="56" rx="6" class="c-mask"/>
-          <rect x="0" y="180" width="150" height="56" rx="6" class="c-external" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="external" class="semantic-sigil s-external" transform="translate(6 186) scale(0.6875)">
+        <g id="node-agent" data-node-id="agent" data-node-label="AI Agent" tabindex="0" role="button" aria-label="Focus AI Agent, MCP client · bearer token, Agent Plane" aria-pressed="false" data-node-kind="external" data-node-sublabel="MCP client · bearer token" data-node-context="Agent Plane">
+          <title>AI Agent · MCP client · bearer token · Agent Plane</title>
+          <rect x="40" y="330" width="170" height="70" rx="6" class="c-mask"/>
+          <rect x="40" y="330" width="170" height="70" rx="6" class="c-external" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="external" class="semantic-sigil s-external" transform="translate(46 336) scale(0.6875)">
             <rect x="2.5" y="5" width="8.5" height="8" rx="1.5"/>
             <path d="M8 2.5h5.5V8M13.5 2.5 7.5 8.5"/>
           </g>
-          <text data-node-label data-detail-anchor x="75" y="206" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">AI Agent</text>
-        <text data-detail="context" x="75" y="222" class="t-muted" font-size="9" text-anchor="middle">JSON-RPC / MCP</text>
+          <text data-node-label data-detail-anchor x="125" y="363" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">AI Agent</text>
+        <text data-detail="context" x="125" y="379" class="t-muted" font-size="9" text-anchor="middle">MCP client · bearer token</text>
         </g>
 
-        <g id="node-reviewer" data-node-id="reviewer" data-node-label="Human Reviewer" tabindex="0" role="button" aria-label="Focus Human Reviewer, Reviewer or Admin role, Architecture component" aria-pressed="false" data-node-kind="external" data-node-sublabel="Reviewer or Admin role" data-node-context="Architecture component">
-          <title>Human Reviewer · Reviewer or Admin role · Architecture component</title>
-          <rect x="0" y="440" width="150" height="56" rx="6" class="c-mask"/>
-          <rect x="0" y="440" width="150" height="56" rx="6" class="c-external" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="external" class="semantic-sigil s-external" transform="translate(6 446) scale(0.6875)">
-            <rect x="2.5" y="5" width="8.5" height="8" rx="1.5"/>
-            <path d="M8 2.5h5.5V8M13.5 2.5 7.5 8.5"/>
-          </g>
-          <text data-node-label data-detail-anchor x="75" y="466" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Human Reviewer</text>
-        <text data-detail="context" x="75" y="482" class="t-muted" font-size="9" text-anchor="middle">Reviewer or Admin role</text>
-        </g>
-
-        <g id="node-auth" data-node-id="auth" data-node-label="Auth Gateway" tabindex="0" role="button" aria-label="Focus Auth Gateway, Bearer + Role + CORS, Architecture component" aria-pressed="false" data-node-kind="security" data-node-sublabel="Bearer + Role + CORS" data-node-context="Architecture component">
-          <title>Auth Gateway · Bearer + Role + CORS · Architecture component</title>
-          <rect x="210" y="180" width="150" height="56" rx="6" class="c-mask"/>
-          <rect x="210" y="180" width="150" height="56" rx="6" class="c-security" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(216 186) scale(0.6875)">
-            <path d="M8 2.2 13 4v3.5c0 3.1-1.8 5.4-5 6.5-3.2-1.1-5-3.4-5-6.5V4Z"/>
-            <path d="m5.8 8 1.5 1.5 3-3"/>
-          </g>
-          <text data-node-label data-detail-anchor x="285" y="206" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Auth Gateway</text>
-        <text data-detail="context" x="285" y="222" class="t-muted" font-size="9" text-anchor="middle">Bearer + Role + CORS</text>
-        </g>
-
-        <g id="node-ratelimit" data-node-id="ratelimit" data-node-label="Rate Limiter" tabindex="0" role="button" aria-label="Focus Rate Limiter, Token Bucket / Identity, Architecture component" aria-pressed="false" data-node-kind="backend" data-node-sublabel="Token Bucket / Identity" data-node-context="Architecture component">
-          <title>Rate Limiter · Token Bucket / Identity · Architecture component</title>
-          <rect x="420" y="180" width="150" height="56" rx="6" class="c-mask"/>
-          <rect x="420" y="180" width="150" height="56" rx="6" class="c-backend" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(426 186) scale(0.6875)">
-            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
-          </g>
-          <text data-node-label data-detail-anchor x="495" y="206" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Rate Limiter</text>
-        <text data-detail="context" x="495" y="222" class="t-muted" font-size="9" text-anchor="middle">Token Bucket / Identity</text>
-        </g>
-
-        <g id="node-proxy" data-node-id="proxy" data-node-label="Proxy Engine" tabindex="0" role="button" aria-label="Focus Proxy Engine, MCP Interceptor, Control Plane / Proxy" aria-pressed="false" data-node-kind="backend" data-node-sublabel="MCP Interceptor" data-node-context="Control Plane / Proxy">
-          <title>Proxy Engine · MCP Interceptor · Control Plane / Proxy</title>
-          <rect x="630" y="180" width="150" height="56" rx="6" class="c-mask"/>
-          <rect x="630" y="180" width="150" height="56" rx="6" class="c-backend" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(636 186) scale(0.6875)">
-            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
-          </g>
-          <text data-node-label data-detail-anchor x="705" y="206" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Proxy Engine</text>
-        <text data-detail="context" x="705" y="222" class="t-muted" font-size="9" text-anchor="middle">MCP Interceptor</text>
-        </g>
-
-        <g id="node-denied" data-node-id="denied" data-node-label="403 Forbidden" tabindex="0" role="button" aria-label="Focus 403 Forbidden, Access Denied, Architecture component" aria-pressed="false" data-node-kind="external" data-node-sublabel="Access Denied" data-node-context="Architecture component">
-          <title>403 Forbidden · Access Denied · Architecture component</title>
-          <rect x="630" y="60" width="150" height="56" rx="6" class="c-mask"/>
-          <rect x="630" y="60" width="150" height="56" rx="6" class="c-external" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="external" class="semantic-sigil s-external" transform="translate(636 66) scale(0.6875)">
-            <rect x="2.5" y="5" width="8.5" height="8" rx="1.5"/>
-            <path d="M8 2.5h5.5V8M13.5 2.5 7.5 8.5"/>
-          </g>
-          <text data-node-label data-detail-anchor x="705" y="86" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">403 Forbidden</text>
-        <text data-detail="context" x="705" y="102" class="t-muted" font-size="9" text-anchor="middle">Access Denied</text>
-        </g>
-
-        <g id="node-opa" data-node-id="opa" data-node-label="OPA Engine" tabindex="0" role="button" aria-label="Focus OPA Engine, Rego eval — fail closed, Control Plane / Proxy" aria-pressed="false" data-node-kind="security" data-node-sublabel="Rego eval — fail closed" data-node-context="Control Plane / Proxy">
-          <title>OPA Engine · Rego eval — fail closed · Control Plane / Proxy</title>
-          <rect x="840" y="60" width="150" height="56" rx="6" class="c-mask"/>
-          <rect x="840" y="60" width="150" height="56" rx="6" class="c-security" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(846 66) scale(0.6875)">
-            <path d="M8 2.2 13 4v3.5c0 3.1-1.8 5.4-5 6.5-3.2-1.1-5-3.4-5-6.5V4Z"/>
-            <path d="m5.8 8 1.5 1.5 3-3"/>
-          </g>
-          <text data-node-label data-detail-anchor x="915" y="86" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">OPA Engine</text>
-        <text data-detail="context" x="915" y="102" class="t-muted" font-size="9" text-anchor="middle">Rego eval — fail closed</text>
-        </g>
-
-        <g id="node-policystore" data-node-id="policystore" data-node-label="Policy Store" tabindex="0" role="button" aria-label="Focus Policy Store, GitOps *.rego, Architecture component" aria-pressed="false" data-node-kind="database" data-node-sublabel="GitOps *.rego" data-node-context="Architecture component">
-          <title>Policy Store · GitOps *.rego · Architecture component</title>
-          <rect x="1060" y="60" width="150" height="56" rx="6" class="c-mask"/>
-          <rect x="1060" y="60" width="150" height="56" rx="6" class="c-database" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(1066 66) scale(0.6875)">
-            <ellipse cx="8" cy="4" rx="5" ry="2"/>
-            <path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/>
-          </g>
-          <text data-node-label data-detail-anchor x="1135" y="86" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Policy Store</text>
-        <text data-detail="context" x="1135" y="102" class="t-muted" font-size="9" text-anchor="middle">GitOps *.rego</text>
-        </g>
-
-        <g id="node-dashboard" data-node-id="dashboard" data-node-label="React Dashboard" tabindex="0" role="button" aria-label="Focus React Dashboard, HITL Inbox / Viewer, Architecture component" aria-pressed="false" data-node-kind="frontend" data-node-sublabel="HITL Inbox / Viewer" data-node-context="Architecture component">
-          <title>React Dashboard · HITL Inbox / Viewer · Architecture component</title>
-          <rect x="210" y="440" width="150" height="56" rx="6" class="c-mask"/>
-          <rect x="210" y="440" width="150" height="56" rx="6" class="c-frontend" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="frontend" class="semantic-sigil s-frontend" transform="translate(216 446) scale(0.6875)">
+        <g id="node-reviewer" data-node-id="reviewer" data-node-label="Reviewer Console" tabindex="0" role="button" aria-label="Focus Reviewer Console, inbox · audit log · policies, Human Plane" aria-pressed="false" data-node-kind="frontend" data-node-sublabel="inbox · audit log · policies" data-node-tag="React" data-node-context="Human Plane">
+          <title>Reviewer Console · inbox · audit log · policies · Human Plane · React</title>
+          <rect x="40" y="40" width="180" height="76" rx="6" class="c-mask"/>
+          <rect x="40" y="40" width="180" height="76" rx="6" class="c-frontend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="frontend" class="semantic-sigil s-frontend" transform="translate(46 46) scale(0.6875)">
             <rect x="2" y="3" width="12" height="10" rx="2"/>
             <path d="M2 6.5h12"/>
             <circle cx="4.1" cy="4.8" r=".7" class="sigil-fill"/>
             <circle cx="6.3" cy="4.8" r=".7" class="sigil-fill"/>
           </g>
-          <text data-node-label data-detail-anchor x="285" y="466" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">React Dashboard</text>
-        <text data-detail="context" x="285" y="482" class="t-muted" font-size="9" text-anchor="middle">HITL Inbox / Viewer</text>
+          <text data-node-label data-detail-anchor x="130" y="76" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Reviewer Console</text>
+        <text data-detail="context" x="130" y="92" class="t-muted" font-size="9" text-anchor="middle">inbox · audit log · policies</text>
+        <text data-detail="fine" x="130" y="108" class="t-frontend" font-size="7" text-anchor="middle">React</text>
         </g>
 
-        <g id="node-restapi" data-node-id="restapi" data-node-label="REST API" tabindex="0" role="button" aria-label="Focus REST API, Control Plane, Control Plane / Proxy" aria-pressed="false" data-node-kind="backend" data-node-sublabel="Control Plane" data-node-context="Control Plane / Proxy">
-          <title>REST API · Control Plane · Control Plane / Proxy</title>
-          <rect x="630" y="440" width="150" height="56" rx="6" class="c-mask"/>
-          <rect x="630" y="440" width="150" height="56" rx="6" class="c-backend" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(636 446) scale(0.6875)">
-            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
-          </g>
-          <text data-node-label data-detail-anchor x="705" y="466" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">REST API</text>
-        <text data-detail="context" x="705" y="482" class="t-muted" font-size="9" text-anchor="middle">Control Plane</text>
-        </g>
-
-        <g id="node-ledger" data-node-id="ledger" data-node-label="Audit Ledger" tabindex="0" role="button" aria-label="Focus Audit Ledger, SHA-256 hash-chain, Data Plane (PostgreSQL)" aria-pressed="false" data-node-kind="database" data-node-sublabel="SHA-256 hash-chain" data-node-context="Data Plane (PostgreSQL)">
-          <title>Audit Ledger · SHA-256 hash-chain · Data Plane (PostgreSQL)</title>
-          <rect x="840" y="300" width="150" height="56" rx="6" class="c-mask"/>
-          <rect x="840" y="300" width="150" height="56" rx="6" class="c-database" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(846 306) scale(0.6875)">
-            <ellipse cx="8" cy="4" rx="5" ry="2"/>
-            <path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/>
-          </g>
-          <text data-node-label data-detail-anchor x="915" y="326" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Audit Ledger</text>
-        <text data-detail="context" x="915" y="342" class="t-muted" font-size="9" text-anchor="middle">SHA-256 hash-chain</text>
-        </g>
-
-        <g id="node-quarantine" data-node-id="quarantine" data-node-label="Quarantine Store" tabindex="0" role="button" aria-label="Focus Quarantine Store, State machine in Postgres, Data Plane (PostgreSQL)" aria-pressed="false" data-node-kind="database" data-node-sublabel="State machine in Postgres" data-node-context="Data Plane (PostgreSQL)">
-          <title>Quarantine Store · State machine in Postgres · Data Plane (PostgreSQL)</title>
-          <rect x="840" y="440" width="150" height="56" rx="6" class="c-mask"/>
-          <rect x="840" y="440" width="150" height="56" rx="6" class="c-database" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(846 446) scale(0.6875)">
-            <ellipse cx="8" cy="4" rx="5" ry="2"/>
-            <path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/>
-          </g>
-          <text data-node-label data-detail-anchor x="915" y="466" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Quarantine Store</text>
-        <text data-detail="context" x="915" y="482" class="t-muted" font-size="9" text-anchor="middle">State machine in Postgres</text>
-        </g>
-
-        <g id="node-worker" data-node-id="worker" data-node-label="Quarantine Worker" tabindex="0" role="button" aria-label="Focus Quarantine Worker, Polls approved queue, Control Plane / Proxy" aria-pressed="false" data-node-kind="backend" data-node-sublabel="Polls approved queue" data-node-context="Control Plane / Proxy">
-          <title>Quarantine Worker · Polls approved queue · Control Plane / Proxy</title>
-          <rect x="1060" y="440" width="150" height="56" rx="6" class="c-mask"/>
-          <rect x="1060" y="440" width="150" height="56" rx="6" class="c-backend" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(1066 446) scale(0.6875)">
-            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
-          </g>
-          <text data-node-label data-detail-anchor x="1135" y="466" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Quarantine Worker</text>
-        <text data-detail="context" x="1135" y="482" class="t-muted" font-size="9" text-anchor="middle">Polls approved queue</text>
-        </g>
-
-        <g id="node-target" data-node-id="target" data-node-label="Upstream APIs" tabindex="0" role="button" aria-label="Focus Upstream APIs, Target Tool Endpoint, Architecture component" aria-pressed="false" data-node-kind="external" data-node-sublabel="Target Tool Endpoint" data-node-context="Architecture component">
-          <title>Upstream APIs · Target Tool Endpoint · Architecture component</title>
-          <rect x="1060" y="300" width="150" height="56" rx="6" class="c-mask"/>
-          <rect x="1060" y="300" width="150" height="56" rx="6" class="c-external" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="external" class="semantic-sigil s-external" transform="translate(1066 306) scale(0.6875)">
+        <g id="node-idp" data-node-id="idp" data-node-label="Identity Provider" tabindex="0" role="button" aria-label="Focus Identity Provider, OIDC · groups → roles, Human Plane" aria-pressed="false" data-node-kind="external" data-node-sublabel="OIDC · groups → roles" data-node-context="Human Plane">
+          <title>Identity Provider · OIDC · groups → roles · Human Plane</title>
+          <rect x="330" y="40" width="180" height="76" rx="6" class="c-mask"/>
+          <rect x="330" y="40" width="180" height="76" rx="6" class="c-external" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="external" class="semantic-sigil s-external" transform="translate(336 46) scale(0.6875)">
             <rect x="2.5" y="5" width="8.5" height="8" rx="1.5"/>
             <path d="M8 2.5h5.5V8M13.5 2.5 7.5 8.5"/>
           </g>
-          <text data-node-label data-detail-anchor x="1135" y="326" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Upstream APIs</text>
-        <text data-detail="context" x="1135" y="342" class="t-muted" font-size="9" text-anchor="middle">Target Tool Endpoint</text>
+          <text data-node-label data-detail-anchor x="420" y="76" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Identity Provider</text>
+        <text data-detail="context" x="420" y="92" class="t-muted" font-size="9" text-anchor="middle">OIDC · groups → roles</text>
+        </g>
+
+        <g id="node-ingress" data-node-id="ingress" data-node-label="HTTP Middleware" tabindex="0" role="button" aria-label="Focus HTTP Middleware, CORS · token / SSO session · CSRF, Ingress" aria-pressed="false" data-node-kind="security" data-node-sublabel="CORS · token / SSO session · CSRF" data-node-context="Ingress">
+          <title>HTTP Middleware · CORS · token / SSO session · CSRF · Ingress</title>
+          <rect x="330" y="320" width="200" height="84" rx="6" class="c-mask"/>
+          <rect x="330" y="320" width="200" height="84" rx="6" class="c-security" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(336 326) scale(0.6875)">
+            <path d="M8 2.2 13 4v3.5c0 3.1-1.8 5.4-5 6.5-3.2-1.1-5-3.4-5-6.5V4Z"/>
+            <path d="m5.8 8 1.5 1.5 3-3"/>
+          </g>
+          <text data-node-label data-detail-anchor x="430" y="360" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">HTTP Middleware</text>
+        <text data-detail="context" x="430" y="376" class="t-muted" font-size="9" text-anchor="middle">CORS · token / SSO session · CSRF</text>
+        </g>
+
+        <g id="node-human-api" data-node-id="human-api" data-node-label="Reviewer API" tabindex="0" role="button" aria-label="Focus Reviewer API, approve · deny · simulate, Control Plane" aria-pressed="false" data-node-kind="backend" data-node-sublabel="approve · deny · simulate" data-node-tag="Go" data-node-context="Control Plane">
+          <title>Reviewer API · approve · deny · simulate · Control Plane · Go</title>
+          <rect x="640" y="40" width="190" height="84" rx="6" class="c-mask"/>
+          <rect x="640" y="40" width="190" height="84" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(646 46) scale(0.6875)">
+            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
+          </g>
+          <text data-node-label data-detail-anchor x="735" y="80" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Reviewer API</text>
+        <text data-detail="context" x="735" y="96" class="t-muted" font-size="9" text-anchor="middle">approve · deny · simulate</text>
+        <text data-detail="fine" x="735" y="116" class="t-backend" font-size="7" text-anchor="middle">Go</text>
+        </g>
+
+        <g id="node-proxy" data-node-id="proxy" data-node-label="MCP Proxy" tabindex="0" role="button" aria-label="Focus MCP Proxy, validate · decide · route, Control Plane" aria-pressed="false" data-node-kind="backend" data-node-sublabel="validate · decide · route" data-node-tag="Go" data-node-context="Control Plane">
+          <title>MCP Proxy · validate · decide · route · Control Plane · Go</title>
+          <rect x="640" y="320" width="190" height="84" rx="6" class="c-mask"/>
+          <rect x="640" y="320" width="190" height="84" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(646 326) scale(0.6875)">
+            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
+          </g>
+          <text data-node-label data-detail-anchor x="735" y="360" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">MCP Proxy</text>
+        <text data-detail="context" x="735" y="376" class="t-muted" font-size="9" text-anchor="middle">validate · decide · route</text>
+        <text data-detail="fine" x="735" y="396" class="t-backend" font-size="7" text-anchor="middle">Go</text>
+        </g>
+
+        <g id="node-policy" data-node-id="policy" data-node-label="Policy Bundle" tabindex="0" role="button" aria-label="Focus Policy Bundle, Rego · versioned · hot reload, Control Plane" aria-pressed="false" data-node-kind="database" data-node-sublabel="Rego · versioned · hot reload" data-node-context="Control Plane">
+          <title>Policy Bundle · Rego · versioned · hot reload · Control Plane</title>
+          <rect x="980" y="40" width="190" height="76" rx="6" class="c-mask"/>
+          <rect x="980" y="40" width="190" height="76" rx="6" class="c-database" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(986 46) scale(0.6875)">
+            <ellipse cx="8" cy="4" rx="5" ry="2"/>
+            <path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/>
+          </g>
+          <text data-node-label data-detail-anchor x="1075" y="76" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Policy Bundle</text>
+        <text data-detail="context" x="1075" y="92" class="t-muted" font-size="9" text-anchor="middle">Rego · versioned · hot reload</text>
+        </g>
+
+        <g id="node-opa" data-node-id="opa" data-node-label="OPA Engine" tabindex="0" role="button" aria-label="Focus OPA Engine, allow · deny · hold, Control Plane" aria-pressed="false" data-node-kind="security" data-node-sublabel="allow · deny · hold" data-node-tag="Rego" data-node-context="Control Plane">
+          <title>OPA Engine · allow · deny · hold · Control Plane · Rego</title>
+          <rect x="980" y="190" width="190" height="76" rx="6" class="c-mask"/>
+          <rect x="980" y="190" width="190" height="76" rx="6" class="c-security" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(986 196) scale(0.6875)">
+            <path d="M8 2.2 13 4v3.5c0 3.1-1.8 5.4-5 6.5-3.2-1.1-5-3.4-5-6.5V4Z"/>
+            <path d="m5.8 8 1.5 1.5 3-3"/>
+          </g>
+          <text data-node-label data-detail-anchor x="1075" y="226" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">OPA Engine</text>
+        <text data-detail="context" x="1075" y="242" class="t-muted" font-size="9" text-anchor="middle">allow · deny · hold</text>
+        <text data-detail="fine" x="1075" y="258" class="t-security" font-size="7" text-anchor="middle">Rego</text>
+        </g>
+
+        <g id="node-target" data-node-id="target" data-node-label="Upstream Tool Server" tabindex="0" role="button" aria-label="Focus Upstream Tool Server, the one configured target, Target Plane" aria-pressed="false" data-node-kind="external" data-node-sublabel="the one configured target" data-node-context="Target Plane">
+          <title>Upstream Tool Server · the one configured target · Target Plane</title>
+          <rect x="1300" y="320" width="190" height="76" rx="6" class="c-mask"/>
+          <rect x="1300" y="320" width="190" height="76" rx="6" class="c-external" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="external" class="semantic-sigil s-external" transform="translate(1306 326) scale(0.6875)">
+            <rect x="2.5" y="5" width="8.5" height="8" rx="1.5"/>
+            <path d="M8 2.5h5.5V8M13.5 2.5 7.5 8.5"/>
+          </g>
+          <text data-node-label data-detail-anchor x="1395" y="356" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Upstream Tool Server</text>
+        <text data-detail="context" x="1395" y="372" class="t-muted" font-size="9" text-anchor="middle">the one configured target</text>
+        </g>
+
+        <g id="node-postgres" data-node-id="postgres" data-node-label="PostgreSQL" tabindex="0" role="button" aria-label="Focus PostgreSQL, audit ledger · held actions · outbox, Data Plane" aria-pressed="false" data-node-kind="database" data-node-sublabel="audit ledger · held actions · outbox" data-node-context="Data Plane">
+          <title>PostgreSQL · audit ledger · held actions · outbox · Data Plane</title>
+          <rect x="640" y="570" width="230" height="84" rx="6" class="c-mask"/>
+          <rect x="640" y="570" width="230" height="84" rx="6" class="c-database" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(646 576) scale(0.6875)">
+            <ellipse cx="8" cy="4" rx="5" ry="2"/>
+            <path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/>
+          </g>
+          <text data-node-label data-detail-anchor x="755" y="610" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">PostgreSQL</text>
+        <text data-detail="context" x="755" y="626" class="t-muted" font-size="9" text-anchor="middle">audit ledger · held actions · outbox</text>
+        </g>
+
+        <g id="node-worker" data-node-id="worker" data-node-label="Replay Worker" tabindex="0" role="button" aria-label="Focus Replay Worker, re-check · write-ahead · run once, Architecture component" aria-pressed="false" data-node-kind="backend" data-node-sublabel="re-check · write-ahead · run once" data-node-tag="Go" data-node-context="Architecture component">
+          <title>Replay Worker · re-check · write-ahead · run once · Architecture component · Go</title>
+          <rect x="1300" y="570" width="200" height="84" rx="6" class="c-mask"/>
+          <rect x="1300" y="570" width="200" height="84" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(1306 576) scale(0.6875)">
+            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
+          </g>
+          <text data-node-label data-detail-anchor x="1400" y="610" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Replay Worker</text>
+        <text data-detail="context" x="1400" y="626" class="t-muted" font-size="9" text-anchor="middle">re-check · write-ahead · run once</text>
+        <text data-detail="fine" x="1400" y="646" class="t-backend" font-size="7" text-anchor="middle">Go</text>
+        </g>
+
+        <g id="node-notifier" data-node-id="notifier" data-node-label="Notifier" tabindex="0" role="button" aria-label="Focus Notifier, outbox · retries · signed, Architecture component" aria-pressed="false" data-node-kind="backend" data-node-sublabel="outbox · retries · signed" data-node-tag="Go" data-node-context="Architecture component">
+          <title>Notifier · outbox · retries · signed · Architecture component · Go</title>
+          <rect x="640" y="740" width="190" height="76" rx="6" class="c-mask"/>
+          <rect x="640" y="740" width="190" height="76" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(646 746) scale(0.6875)">
+            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
+          </g>
+          <text data-node-label data-detail-anchor x="735" y="776" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Notifier</text>
+        <text data-detail="context" x="735" y="792" class="t-muted" font-size="9" text-anchor="middle">outbox · retries · signed</text>
+        <text data-detail="fine" x="735" y="808" class="t-backend" font-size="7" text-anchor="middle">Go</text>
+        </g>
+
+        <g id="node-slack" data-node-id="slack" data-node-label="Slack · Webhooks" tabindex="0" role="button" aria-label="Focus Slack · Webhooks, notify · Approve / Deny, Architecture component" aria-pressed="false" data-node-kind="external" data-node-sublabel="notify · Approve / Deny" data-node-context="Architecture component">
+          <title>Slack · Webhooks · notify · Approve / Deny · Architecture component</title>
+          <rect x="330" y="740" width="190" height="76" rx="6" class="c-mask"/>
+          <rect x="330" y="740" width="190" height="76" rx="6" class="c-external" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="external" class="semantic-sigil s-external" transform="translate(336 746) scale(0.6875)">
+            <rect x="2.5" y="5" width="8.5" height="8" rx="1.5"/>
+            <path d="M8 2.5h5.5V8M13.5 2.5 7.5 8.5"/>
+          </g>
+          <text data-node-label data-detail-anchor x="425" y="776" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Slack · Webhooks</text>
+        <text data-detail="context" x="425" y="792" class="t-muted" font-size="9" text-anchor="middle">notify · Approve / Deny</text>
         </g>
 
         <!-- Connection labels -->
-        <g data-detail="context" data-edge-from="agent" data-edge-to="auth" data-edge-label="1. Bearer token" data-edge-key="0">
-          <rect x="109" y="166" width="82" height="14" rx="3" class="c-mask"/>
-          <text x="150" y="176" class="t-backend" font-size="8" text-anchor="middle">1. Bearer token</text>
+        <g data-detail="context" data-edge-from="agent" data-edge-to="ingress" data-edge-label="JSON-RPC / MCP" data-edge-key="0" data-edge-id="agent-ingress">
+          <rect x="231.4" y="349" width="77.2" height="14" rx="3" class="c-mask"/>
+          <text x="270" y="359" class="t-backend" font-size="8" text-anchor="middle">JSON-RPC / MCP</text>
         </g>
-        <g data-detail="context" data-edge-from="auth" data-edge-to="ratelimit" data-edge-label="2. role=agent" data-edge-key="1">
-          <rect x="353.8" y="166" width="72.4" height="14" rx="3" class="c-mask"/>
-          <text x="390" y="176" class="t-backend" font-size="8" text-anchor="middle">2. role=agent</text>
+        <g data-detail="context" data-edge-from="ingress" data-edge-to="proxy" data-edge-label="agents only" data-edge-key="1" data-edge-id="ingress-proxy">
+          <rect x="553.6" y="349" width="62.8" height="14" rx="3" class="c-mask"/>
+          <text x="585" y="359" class="t-muted" font-size="8" text-anchor="middle">agents only</text>
         </g>
-        <g data-detail="context" data-edge-from="ratelimit" data-edge-to="proxy" data-edge-label="3. rate OK" data-edge-key="2">
-          <rect x="571" y="195" width="58" height="14" rx="3" class="c-mask"/>
-          <text x="600" y="205" class="t-backend" font-size="8" text-anchor="middle">3. rate OK</text>
+        <g data-detail="context" data-edge-from="reviewer" data-edge-to="idp" data-edge-label="sign in" data-edge-key="2" data-edge-id="reviewer-idp">
+          <rect x="253.2" y="51" width="43.6" height="14" rx="3" class="c-mask"/>
+          <text x="275" y="61" class="t-messagebus" font-size="8" text-anchor="middle">sign in</text>
         </g>
-        <g data-detail="context" data-edge-from="proxy" data-edge-to="opa" data-edge-label="4. Evaluate" data-edge-key="3">
-          <rect x="729.1" y="136" width="62.8" height="14" rx="3" class="c-mask"/>
-          <text x="760.5" y="146" class="t-muted" font-size="8" text-anchor="middle">4. Evaluate</text>
+        <g data-detail="context" data-edge-from="reviewer" data-edge-to="ingress" data-edge-label="REST · session" data-edge-key="3" data-edge-id="reviewer-ingress">
+          <rect x="236.4" y="200" width="77.2" height="14" rx="3" class="c-mask"/>
+          <text x="275" y="210" class="t-muted" font-size="8" text-anchor="middle">REST · session</text>
         </g>
-        <g data-detail="context" data-edge-from="opa" data-edge-to="policystore" data-edge-label="reads" data-edge-key="4">
-          <rect x="1008" y="68" width="34" height="14" rx="3" class="c-mask"/>
-          <text x="1025" y="78" class="t-messagebus" font-size="8" text-anchor="middle">reads</text>
+        <g data-detail="context" data-edge-from="ingress" data-edge-to="human-api" data-edge-label="reviewers only" data-edge-key="4" data-edge-id="ingress-human">
+          <rect x="546.4" y="202" width="77.2" height="14" rx="3" class="c-mask"/>
+          <text x="585" y="212" class="t-security" font-size="8" text-anchor="middle">reviewers only</text>
         </g>
-        <g data-detail="context" data-edge-from="proxy" data-edge-to="ledger" data-edge-label="5. Append entry" data-edge-key="5">
-          <rect x="769" y="244.5" width="82" height="14" rx="3" class="c-mask"/>
-          <text x="810" y="254.5" class="t-backend" font-size="8" text-anchor="middle">5. Append entry</text>
+        <g data-detail="context" data-edge-from="human-api" data-edge-to="idp" data-edge-label="verify token" data-edge-key="5" data-edge-id="human-idp">
+          <rect x="541.2" y="55" width="67.6" height="14" rx="3" class="c-mask"/>
+          <text x="575" y="65" class="t-messagebus" font-size="8" text-anchor="middle">verify token</text>
         </g>
-        <g data-detail="context" data-edge-from="proxy" data-edge-to="target" data-edge-label="6a. ALLOW" data-edge-key="6">
-          <rect x="1009.4" y="251.5" width="53.199999999999996" height="14" rx="3" class="c-mask"/>
-          <text x="1036" y="261.5" class="t-backend" font-size="8" text-anchor="middle">6a. ALLOW</text>
+        <g data-detail="context" data-edge-from="proxy" data-edge-to="opa" data-edge-label="evaluate" data-edge-key="6" data-edge-id="proxy-opa">
+          <rect x="880.8" y="271.5" width="48.4" height="14" rx="3" class="c-mask"/>
+          <text x="905" y="281.5" class="t-muted" font-size="8" text-anchor="middle">evaluate</text>
         </g>
-        <g data-detail="context" data-edge-from="proxy" data-edge-to="denied" data-edge-label="6b. DENY" data-edge-key="7">
-          <rect x="581.8" y="150.5" width="48.4" height="14" rx="3" class="c-mask"/>
-          <text x="606" y="160.5" class="t-backend" font-size="8" text-anchor="middle">6b. DENY</text>
+        <g data-detail="context" data-edge-from="policy" data-edge-to="opa" data-edge-label="hot reload" data-edge-key="7" data-edge-id="policy-opa">
+          <rect x="1046" y="140" width="58" height="14" rx="3" class="c-mask"/>
+          <text x="1075" y="150" class="t-messagebus" font-size="8" text-anchor="middle">hot reload</text>
         </g>
-        <g data-detail="context" data-edge-from="proxy" data-edge-to="quarantine" data-edge-label="6c. QUARANTINE" data-edge-key="8">
-          <rect x="751.4" y="340" width="77.2" height="14" rx="3" class="c-mask"/>
-          <text x="790" y="350" class="t-muted" font-size="8" text-anchor="middle">6c. QUARANTINE</text>
+        <g data-detail="context" data-edge-from="proxy" data-edge-to="target" data-edge-label="ALLOW · forward" data-edge-key="8" data-edge-id="proxy-target">
+          <rect x="1024" y="349" width="82" height="14" rx="3" class="c-mask"/>
+          <text x="1065" y="359" class="t-backend" font-size="8" text-anchor="middle">ALLOW · forward</text>
         </g>
-        <g data-detail="context" data-edge-from="reviewer" data-edge-to="dashboard" data-edge-label="uses" data-edge-key="9">
-          <rect x="165" y="448" width="30" height="14" rx="3" class="c-mask"/>
-          <text x="180" y="458" class="t-muted" font-size="8" text-anchor="middle">uses</text>
+        <g data-detail="context" data-edge-from="proxy" data-edge-to="postgres" data-edge-label="record first · HOLD" data-edge-key="9" data-edge-id="proxy-postgres">
+          <rect x="694.4" y="467" width="101.2" height="14" rx="3" class="c-mask"/>
+          <text x="745" y="477" class="t-backend" font-size="8" text-anchor="middle">record first · HOLD</text>
         </g>
-        <g data-detail="context" data-edge-from="dashboard" data-edge-to="restapi" data-edge-label="Bearer token (reviewer)" data-edge-key="10">
-          <rect x="434.8" y="448" width="120.39999999999999" height="14" rx="3" class="c-mask"/>
-          <text x="495" y="458" class="t-muted" font-size="8" text-anchor="middle">Bearer token (reviewer)</text>
+        <g data-detail="context" data-edge-from="human-api" data-edge-to="postgres" data-edge-label="approve / deny · ledgered" data-edge-key="10" data-edge-id="human-postgres">
+          <rect x="895" y="460" width="130" height="14" rx="3" class="c-mask"/>
+          <text x="960" y="470" class="t-muted" font-size="8" text-anchor="middle">approve / deny · ledgered</text>
         </g>
-        <g data-detail="context" data-edge-from="restapi" data-edge-to="quarantine" data-edge-label="approve / update status" data-edge-key="11">
-          <rect x="689.8" y="426" width="120.39999999999999" height="14" rx="3" class="c-mask"/>
-          <text x="750" y="436" class="t-muted" font-size="8" text-anchor="middle">approve / update status</text>
+        <g data-detail="context" data-edge-from="worker" data-edge-to="postgres" data-edge-label="claim · write-ahead · outcome" data-edge-key="11" data-edge-id="worker-postgres">
+          <rect x="1010.4" y="599" width="149.2" height="14" rx="3" class="c-mask"/>
+          <text x="1085" y="609" class="t-muted" font-size="8" text-anchor="middle">claim · write-ahead · outcome</text>
         </g>
-        <g data-detail="context" data-edge-from="restapi" data-edge-to="ledger" data-edge-label="reads / append review" data-edge-key="12">
-          <rect x="654.6" y="350" width="110.8" height="14" rx="3" class="c-mask"/>
-          <text x="710" y="360" class="t-messagebus" font-size="8" text-anchor="middle">reads / append review</text>
+        <g data-detail="context" data-edge-from="worker" data-edge-to="opa" data-edge-label="re-check policy" data-edge-key="12" data-edge-id="worker-opa">
+          <rect x="1194" y="396.5" width="82" height="14" rx="3" class="c-mask"/>
+          <text x="1235" y="406.5" class="t-muted" font-size="8" text-anchor="middle">re-check policy</text>
         </g>
-        <g data-detail="context" data-edge-from="worker" data-edge-to="quarantine" data-edge-label="polls approved" data-edge-key="13">
-          <rect x="986.4" y="426" width="77.2" height="14" rx="3" class="c-mask"/>
-          <text x="1025" y="436" class="t-messagebus" font-size="8" text-anchor="middle">polls approved</text>
+        <g data-detail="context" data-edge-from="worker" data-edge-to="target" data-edge-label="replay once" data-edge-key="13" data-edge-id="worker-target">
+          <rect x="1376.6" y="526" width="62.8" height="14" rx="3" class="c-mask"/>
+          <text x="1408" y="536" class="t-backend" font-size="8" text-anchor="middle">replay once</text>
         </g>
-        <g data-detail="context" data-edge-from="worker" data-edge-to="target" data-edge-label="replay request" data-edge-key="14">
-          <rect x="1195.4" y="378" width="77.2" height="14" rx="3" class="c-mask"/>
-          <text x="1234" y="388" class="t-muted" font-size="8" text-anchor="middle">replay request</text>
+        <g data-detail="context" data-edge-from="postgres" data-edge-to="notifier" data-edge-label="outbox" data-edge-key="14" data-edge-id="postgres-notifier">
+          <rect x="725.6" y="677" width="38.8" height="14" rx="3" class="c-mask"/>
+          <text x="745" y="687" class="t-muted" font-size="8" text-anchor="middle">outbox</text>
         </g>
-        <g data-detail="context" data-edge-from="worker" data-edge-to="ledger" data-edge-label="record outcome" data-edge-key="15">
-          <rect x="921.4" y="360" width="77.2" height="14" rx="3" class="c-mask"/>
-          <text x="960" y="370" class="t-messagebus" font-size="8" text-anchor="middle">record outcome</text>
+        <g data-detail="context" data-edge-from="notifier" data-edge-to="slack" data-edge-label="held action" data-edge-key="15" data-edge-id="notifier-slack">
+          <rect x="548.6" y="758" width="62.8" height="14" rx="3" class="c-mask"/>
+          <text x="580" y="768" class="t-muted" font-size="8" text-anchor="middle">held action</text>
+        </g>
+        <g data-detail="context" data-edge-from="slack" data-edge-to="ingress" data-edge-label="Slack-signed click" data-edge-key="16" data-edge-id="slack-ingress">
+          <rect x="387.3" y="696" width="96.39999999999999" height="14" rx="3" class="c-mask"/>
+          <text x="435.5" y="706" class="t-security" font-size="8" text-anchor="middle">Slack-signed click</text>
         </g>
 
         <!-- Boundary labels (foreground masks keep routes out of titles) -->
-        <g data-graph-role="structural-frame-label" data-composition-frame-id="0" data-composition-frame-kind="security-group" data-composition-frame-label="Data Plane (PostgreSQL)">
-          <rect data-graph-role="structural-frame-label-mask" x="830" y="280" width="134.2" height="16" rx="3" class="c-mask"/>
-          <text data-boundary-label x="834" y="293" class="t-security" font-size="9" font-weight="600">Data Plane (PostgreSQL)</text>
+        <g data-graph-role="structural-frame-label" data-composition-frame-id="0" data-composition-frame-kind="region" data-composition-frame-label="Agent Plane">
+          <rect data-graph-role="structural-frame-label-mask" x="26" y="309" width="75.91484530967742" height="17" rx="3" class="c-mask"/>
+          <text data-boundary-label x="30" y="322.98709777419356" class="t-cloud" font-size="9.987097774193549" font-weight="600">Agent Plane</text>
         </g>
 
-        <g data-graph-role="structural-frame-label" data-composition-frame-id="1" data-composition-frame-kind="region" data-composition-frame-label="Control Plane / Proxy">
-          <rect data-graph-role="structural-frame-label-mask" x="622" y="40" width="123.39999999999999" height="16" rx="3" class="c-mask"/>
-          <text data-boundary-label x="626" y="53" class="t-cloud" font-size="9" font-weight="600">Control Plane / Proxy</text>
+        <g data-graph-role="structural-frame-label" data-composition-frame-id="1" data-composition-frame-kind="region" data-composition-frame-label="Human Plane">
+          <rect data-graph-role="structural-frame-label-mask" x="26" y="19" width="75.91484530967742" height="17" rx="3" class="c-mask"/>
+          <text data-boundary-label x="30" y="32.98709777419355" class="t-cloud" font-size="9.987097774193549" font-weight="600">Human Plane</text>
+        </g>
+
+        <g data-graph-role="structural-frame-label" data-composition-frame-id="2" data-composition-frame-kind="security-group" data-composition-frame-label="Ingress">
+          <rect data-graph-role="structural-frame-label-mask" x="316" y="299" width="51.94581065161291" height="17" rx="3" class="c-mask"/>
+          <text data-boundary-label x="320" y="312.98709777419356" class="t-security" font-size="9.987097774193549" font-weight="600">Ingress</text>
+        </g>
+
+        <g data-graph-role="structural-frame-label" data-composition-frame-id="3" data-composition-frame-kind="security-group" data-composition-frame-label="Control Plane">
+          <rect data-graph-role="structural-frame-label-mask" x="626" y="19" width="87.89936263870968" height="17" rx="3" class="c-mask"/>
+          <text data-boundary-label x="630" y="32.98709777419355" class="t-security" font-size="9.987097774193549" font-weight="600">Control Plane</text>
+        </g>
+
+        <g data-graph-role="structural-frame-label" data-composition-frame-id="4" data-composition-frame-kind="region" data-composition-frame-label="Data Plane">
+          <rect data-graph-role="structural-frame-label-mask" x="626" y="549" width="69.92258664516129" height="17" rx="3" class="c-mask"/>
+          <text data-boundary-label x="630" y="562.9870977741936" class="t-cloud" font-size="9.987097774193549" font-weight="600">Data Plane</text>
+        </g>
+
+        <g data-graph-role="structural-frame-label" data-composition-frame-id="5" data-composition-frame-kind="region" data-composition-frame-label="Target Plane">
+          <rect data-graph-role="structural-frame-label-mask" x="1286" y="299" width="81.90710397419355" height="17" rx="3" class="c-mask"/>
+          <text data-boundary-label x="1290" y="312.98709777419356" class="t-cloud" font-size="9.987097774193549" font-weight="600">Target Plane</text>
         </g>
 
         <!-- Legend -->
         <g data-legend data-legend-bridge>
-          <text x="40" y="584" class="t-primary" font-size="12" font-weight="650">Legend</text>
-          <g data-legend-semantic-kind="frontend" data-legend-kind="frontend" data-legend-label="Frontend" data-legend-x="40" data-legend-baseline="604" data-legend-width="83">
-            <rect x="40" y="595" width="16" height="10" rx="2.5" class="c-frontend" stroke-width="1"/>
-            <text x="62" y="604" class="t-muted" font-size="10" font-weight="500">Frontend</text>
+          <text x="40" y="848" class="t-primary" font-size="12" font-weight="650">Legend</text>
+          <g data-legend-semantic-kind="frontend" data-legend-kind="frontend" data-legend-label="Frontend" data-legend-x="40" data-legend-baseline="868" data-legend-width="83">
+            <rect x="40" y="859" width="16" height="10" rx="2.5" class="c-frontend" stroke-width="1"/>
+            <text x="62" y="868" class="t-muted" font-size="10" font-weight="500">Frontend</text>
           </g>
-          <g data-legend-semantic-kind="backend" data-legend-kind="backend" data-legend-label="Backend" data-legend-x="145" data-legend-baseline="604" data-legend-width="78">
-            <rect x="145" y="595" width="16" height="10" rx="2.5" class="c-backend" stroke-width="1"/>
-            <text x="167" y="604" class="t-muted" font-size="10" font-weight="500">Backend</text>
+          <g data-legend-semantic-kind="backend" data-legend-kind="backend" data-legend-label="Backend" data-legend-x="145" data-legend-baseline="868" data-legend-width="78">
+            <rect x="145" y="859" width="16" height="10" rx="2.5" class="c-backend" stroke-width="1"/>
+            <text x="167" y="868" class="t-muted" font-size="10" font-weight="500">Backend</text>
           </g>
-          <g data-legend-semantic-kind="database" data-legend-kind="database" data-legend-label="Database" data-legend-x="245" data-legend-baseline="604" data-legend-width="83">
-            <rect x="245" y="595" width="16" height="10" rx="2.5" class="c-database" stroke-width="1"/>
-            <text x="267" y="604" class="t-muted" font-size="10" font-weight="500">Database</text>
+          <g data-legend-semantic-kind="database" data-legend-kind="database" data-legend-label="Database" data-legend-x="245" data-legend-baseline="868" data-legend-width="83">
+            <rect x="245" y="859" width="16" height="10" rx="2.5" class="c-database" stroke-width="1"/>
+            <text x="267" y="868" class="t-muted" font-size="10" font-weight="500">Database</text>
           </g>
-          <g data-legend-semantic-kind="security" data-legend-kind="security" data-legend-label="Security" data-legend-x="350" data-legend-baseline="604" data-legend-width="83">
-            <rect x="350" y="595" width="16" height="10" rx="2.5" class="c-security" stroke-width="1"/>
-            <text x="372" y="604" class="t-muted" font-size="10" font-weight="500">Security</text>
+          <g data-legend-semantic-kind="security" data-legend-kind="security" data-legend-label="Security" data-legend-x="350" data-legend-baseline="868" data-legend-width="83">
+            <rect x="350" y="859" width="16" height="10" rx="2.5" class="c-security" stroke-width="1"/>
+            <text x="372" y="868" class="t-muted" font-size="10" font-weight="500">Security</text>
           </g>
-          <g data-legend-semantic-kind="external" data-legend-kind="external" data-legend-label="External" data-legend-x="455" data-legend-baseline="604" data-legend-width="83">
-            <rect x="455" y="595" width="16" height="10" rx="2.5" class="c-external" stroke-width="1"/>
-            <text x="477" y="604" class="t-muted" font-size="10" font-weight="500">External</text>
+          <g data-legend-semantic-kind="external" data-legend-kind="external" data-legend-label="External" data-legend-x="455" data-legend-baseline="868" data-legend-width="83">
+            <rect x="455" y="859" width="16" height="10" rx="2.5" class="c-external" stroke-width="1"/>
+            <text x="477" y="868" class="t-muted" font-size="10" font-weight="500">External</text>
           </g>
         </g>
       </svg>
@@ -5494,29 +5521,7 @@
 
     <!-- Info Cards -->
     <div class="cards">
-      <div class="card">
-        <div class="card-header">
-          <div class="card-dot cyan"></div>
-          <h3>Auth &amp; Rate Limits</h3>
-        </div>
-        <ul>
-          <li>&bull; Ingress requires Bearer Auth before any processing.</li>
-          <li>&bull; Rate limiter keys off authenticated identity, not headers.</li>
-          <li>&bull; Agent tokens cannot access REST API endpoints (403).</li>
-        </ul>
-      </div>
 
-      <div class="card">
-        <div class="card-header">
-          <div class="card-dot amber"></div>
-          <h3>Quarantine &amp; Replay</h3>
-        </div>
-        <ul>
-          <li>&bull; Reviewer hits REST API to approve the payload.</li>
-          <li>&bull; Quarantine Worker picks up approved jobs from Postgres.</li>
-          <li>&bull; Worker executes upstream using Target authentication credentials.</li>
-        </ul>
-      </div>
     </div>
 
   </div>

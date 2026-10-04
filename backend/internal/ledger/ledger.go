@@ -12,8 +12,8 @@ import (
 	"math/rand/v2"
 	"time"
 
-	"github.com/austinchima/kiterail/internal/db"
-	"github.com/austinchima/kiterail/internal/metrics"
+	"github.com/austinchima/elodea/internal/db"
+	"github.com/austinchima/elodea/internal/metrics"
 	"github.com/lib/pq"
 )
 
