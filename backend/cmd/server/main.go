@@ -37,7 +37,7 @@ import (
 
 // version is overridden at build time: -ldflags "-X main.version=v1.2.3".
 var (
-	version   = "1.2.0-dev"
+	version   = "2.0.0-dev"
 	startTime = time.Now()
 )
 
