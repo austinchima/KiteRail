@@ -124,7 +124,7 @@ jobs:
       - name: Image healthcheck binary works
         run: docker run --rm --entrypoint /usr/local/bin/elodea elodea:ci -h 2>&1 | grep -q healthcheck
       - name: Scan image (fail on fixable HIGH/CRITICAL)
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: elodea:ci
           severity: HIGH,CRITICAL
