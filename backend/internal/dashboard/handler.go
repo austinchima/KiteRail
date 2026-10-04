@@ -6,9 +6,9 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/austinchima/kiterail/internal/db"
-	"github.com/austinchima/kiterail/internal/ledger"
-	"github.com/austinchima/kiterail/internal/quarantine"
+	"github.com/austinchima/elodea/internal/db"
+	"github.com/austinchima/elodea/internal/ledger"
+	"github.com/austinchima/elodea/internal/quarantine"
 )
 
 // Handler represents the HTTP handler for the dashboard.

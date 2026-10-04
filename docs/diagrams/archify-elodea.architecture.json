@@ -1,0 +1,486 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Elodea Verified Runtime Flow",
+    "output": "docs/diagrams/architecture-interactive.html",
+    "quality_profile": "standard",
+    "repository": {
+      "url": "https://github.com/austinchima/elodea.git",
+      "revision": "bc4a7f6c9ed0f08f452d0be4d8b556754ac1dbaf"
+    }
+  },
+  "components": [
+    {
+      "id": "agent",
+      "type": "external",
+      "label": "AI Agent",
+      "sublabel": "MCP client · bearer token",
+      "pos": [
+        40,
+        330
+      ],
+      "size": [
+        170,
+        70
+      ],
+      "sources": [
+        {
+          "path": "backend/internal/proxy/adapter.go",
+          "label": "MCP adapter"
+        }
+      ]
+    },
+    {
+      "id": "reviewer",
+      "type": "frontend",
+      "label": "Reviewer Console",
+      "sublabel": "inbox · audit log · policies",
+      "pos": [
+        40,
+        40
+      ],
+      "size": [
+        180,
+        76
+      ],
+      "tag": "React"
+    },
+    {
+      "id": "idp",
+      "type": "external",
+      "label": "Identity Provider",
+      "sublabel": "OIDC · groups → roles",
+      "pos": [
+        330,
+        40
+      ],
+      "size": [
+        180,
+        76
+      ],
+      "sources": [
+        {
+          "path": "backend/internal/sso/sso.go",
+          "label": "SSO sign-in"
+        }
+      ]
+    },
+    {
+      "id": "ingress",
+      "type": "security",
+      "label": "HTTP Middleware",
+      "sublabel": "CORS · token / SSO session · CSRF",
+      "pos": [
+        330,
+        320
+      ],
+      "size": [
+        200,
+        84
+      ],
+      "sources": [
+        {
+          "path": "backend/cmd/server/main.go",
+          "label": "Trust-domain chains"
+        },
+        {
+          "path": "backend/internal/auth/auth.go",
+          "label": "Auth + CSRF"
+        }
+      ]
+    },
+    {
+      "id": "human-api",
+      "type": "backend",
+      "label": "Reviewer API",
+      "sublabel": "approve · deny · simulate",
+      "pos": [
+        640,
+        40
+      ],
+      "size": [
+        190,
+        84
+      ],
+      "tag": "Go",
+      "sources": [
+        {
+          "path": "backend/internal/quarantine/handler.go",
+          "label": "Approve / Deny"
+        },
+        {
+          "path": "backend/internal/slackapp/slackapp.go",
+          "label": "Slack clicks"
+        }
+      ]
+    },
+    {
+      "id": "proxy",
+      "type": "backend",
+      "label": "MCP Proxy",
+      "sublabel": "validate · decide · route",
+      "pos": [
+        640,
+        320
+      ],
+      "size": [
+        190,
+        84
+      ],
+      "tag": "Go",
+      "sources": [
+        {
+          "path": "backend/internal/proxy/proxy.go",
+          "label": "Inline request path"
+        }
+      ]
+    },
+    {
+      "id": "policy",
+      "type": "database",
+      "label": "Policy Bundle",
+      "sublabel": "Rego · versioned · hot reload",
+      "pos": [
+        980,
+        40
+      ],
+      "size": [
+        190,
+        76
+      ],
+      "sources": [
+        {
+          "path": "backend/internal/opaengine/engine.go",
+          "label": "Reload + fingerprint"
+        }
+      ]
+    },
+    {
+      "id": "opa",
+      "type": "security",
+      "label": "OPA Engine",
+      "sublabel": "allow · deny · hold",
+      "pos": [
+        980,
+        190
+      ],
+      "size": [
+        190,
+        76
+      ],
+      "tag": "Rego",
+      "sources": [
+        {
+          "path": "backend/internal/opaengine/engine.go",
+          "label": "Policy evaluation"
+        }
+      ]
+    },
+    {
+      "id": "target",
+      "type": "external",
+      "label": "Upstream Tool Server",
+      "sublabel": "the one configured target",
+      "pos": [
+        1300,
+        320
+      ],
+      "size": [
+        190,
+        76
+      ],
+      "sources": [
+        {
+          "path": "backend/internal/proxy/proxy.go",
+          "label": "Pinned upstream URL"
+        }
+      ]
+    },
+    {
+      "id": "postgres",
+      "type": "database",
+      "label": "PostgreSQL",
+      "sublabel": "audit ledger · held actions · outbox",
+      "pos": [
+        640,
+        570
+      ],
+      "size": [
+        230,
+        84
+      ],
+      "sources": [
+        {
+          "path": "backend/internal/ledger/ledger.go",
+          "label": "Hash-chained ledger"
+        },
+        {
+          "path": "backend/internal/quarantine/store.go",
+          "label": "Held actions"
+        },
+        {
+          "path": "backend/sql/notify.sql",
+          "label": "Notification outbox"
+        }
+      ]
+    },
+    {
+      "id": "worker",
+      "type": "backend",
+      "label": "Replay Worker",
+      "sublabel": "re-check · write-ahead · run once",
+      "pos": [
+        1300,
+        570
+      ],
+      "size": [
+        200,
+        84
+      ],
+      "tag": "Go",
+      "sources": [
+        {
+          "path": "backend/internal/quarantine/worker.go",
+          "label": "Durable replay"
+        }
+      ]
+    },
+    {
+      "id": "notifier",
+      "type": "backend",
+      "label": "Notifier",
+      "sublabel": "outbox · retries · signed",
+      "pos": [
+        640,
+        740
+      ],
+      "size": [
+        190,
+        76
+      ],
+      "tag": "Go",
+      "sources": [
+        {
+          "path": "backend/internal/notify/notify.go",
+          "label": "Outbox worker"
+        }
+      ]
+    },
+    {
+      "id": "slack",
+      "type": "external",
+      "label": "Slack · Webhooks",
+      "sublabel": "notify · Approve / Deny",
+      "pos": [
+        330,
+        740
+      ],
+      "size": [
+        190,
+        76
+      ],
+      "sources": [
+        {
+          "path": "backend/internal/slackapp/slackapp.go",
+          "label": "Slack app"
+        }
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "Agent Plane",
+      "wraps": [
+        "agent"
+      ],
+      "pad": 18
+    },
+    {
+      "kind": "region",
+      "label": "Human Plane",
+      "wraps": [
+        "reviewer",
+        "idp"
+      ],
+      "pad": 18
+    },
+    {
+      "kind": "security-group",
+      "label": "Ingress",
+      "wraps": [
+        "ingress"
+      ],
+      "pad": 18
+    },
+    {
+      "kind": "security-group",
+      "label": "Control Plane",
+      "wraps": [
+        "human-api",
+        "proxy",
+        "policy",
+        "opa"
+      ],
+      "pad": 18
+    },
+    {
+      "kind": "region",
+      "label": "Data Plane",
+      "wraps": [
+        "postgres"
+      ],
+      "pad": 18
+    },
+    {
+      "kind": "region",
+      "label": "Target Plane",
+      "wraps": [
+        "target"
+      ],
+      "pad": 18
+    }
+  ],
+  "connections": [
+    {
+      "id": "agent-ingress",
+      "from": "agent",
+      "to": "ingress",
+      "label": "JSON-RPC / MCP",
+      "variant": "emphasis"
+    },
+    {
+      "id": "ingress-proxy",
+      "from": "ingress",
+      "to": "proxy",
+      "label": "agents only"
+    },
+    {
+      "id": "reviewer-idp",
+      "from": "reviewer",
+      "to": "idp",
+      "label": "sign in",
+      "variant": "dashed"
+    },
+    {
+      "id": "reviewer-ingress",
+      "from": "reviewer",
+      "to": "ingress",
+      "label": "REST · session"
+    },
+    {
+      "id": "ingress-human",
+      "from": "ingress",
+      "to": "human-api",
+      "label": "reviewers only",
+      "variant": "security"
+    },
+    {
+      "id": "human-idp",
+      "from": "human-api",
+      "to": "idp",
+      "label": "verify token",
+      "variant": "dashed"
+    },
+    {
+      "id": "proxy-opa",
+      "from": "proxy",
+      "to": "opa",
+      "label": "evaluate"
+    },
+    {
+      "id": "policy-opa",
+      "from": "policy",
+      "to": "opa",
+      "label": "hot reload",
+      "variant": "dashed",
+      "labelAt": [
+        1075,
+        150
+      ]
+    },
+    {
+      "id": "proxy-target",
+      "from": "proxy",
+      "to": "target",
+      "label": "ALLOW · forward",
+      "variant": "emphasis"
+    },
+    {
+      "id": "proxy-postgres",
+      "from": "proxy",
+      "to": "postgres",
+      "label": "record first · HOLD",
+      "variant": "emphasis",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "human-postgres",
+      "from": "human-api",
+      "to": "postgres",
+      "label": "approve / deny · ledgered",
+      "fromSide": "right",
+      "toSide": "right",
+      "via": [
+        [
+          920,
+          82
+        ],
+        [
+          920,
+          612
+        ]
+      ],
+      "labelAt": [
+        960,
+        470
+      ]
+    },
+    {
+      "id": "worker-postgres",
+      "from": "worker",
+      "to": "postgres",
+      "label": "claim · write-ahead · outcome"
+    },
+    {
+      "id": "worker-opa",
+      "from": "worker",
+      "to": "opa",
+      "label": "re-check policy"
+    },
+    {
+      "id": "worker-target",
+      "from": "worker",
+      "to": "target",
+      "label": "replay once",
+      "variant": "emphasis",
+      "fromSide": "top",
+      "toSide": "bottom"
+    },
+    {
+      "id": "postgres-notifier",
+      "from": "postgres",
+      "to": "notifier",
+      "label": "outbox",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "notifier-slack",
+      "from": "notifier",
+      "to": "slack",
+      "label": "held action"
+    },
+    {
+      "id": "slack-ingress",
+      "from": "slack",
+      "to": "ingress",
+      "label": "Slack-signed click",
+      "variant": "security",
+      "fromSide": "top",
+      "toSide": "bottom"
+    }
+  ]
+}

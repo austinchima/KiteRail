@@ -11,11 +11,11 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/austinchima/kiterail/internal/db"
-	"github.com/austinchima/kiterail/internal/ledger"
-	"github.com/austinchima/kiterail/internal/mcp"
-	"github.com/austinchima/kiterail/internal/metrics"
-	"github.com/austinchima/kiterail/internal/types"
+	"github.com/austinchima/elodea/internal/db"
+	"github.com/austinchima/elodea/internal/ledger"
+	"github.com/austinchima/elodea/internal/mcp"
+	"github.com/austinchima/elodea/internal/metrics"
+	"github.com/austinchima/elodea/internal/types"
 )
 
 // defaultMaxReplayAttempts is the production retry limit per approval.

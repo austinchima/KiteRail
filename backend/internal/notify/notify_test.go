@@ -18,7 +18,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 
-	"github.com/austinchima/kiterail/internal/db"
+	"github.com/austinchima/elodea/internal/db"
 )
 
 var heldAt = time.Date(2026, 10, 3, 9, 30, 0, 0, time.UTC)

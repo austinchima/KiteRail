@@ -32,8 +32,8 @@ import (
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 
-	"github.com/austinchima/kiterail/internal/db"
-	"github.com/austinchima/kiterail/internal/metrics"
+	"github.com/austinchima/elodea/internal/db"
+	"github.com/austinchima/elodea/internal/metrics"
 )
 
 // HeldAction is what a notification describes.

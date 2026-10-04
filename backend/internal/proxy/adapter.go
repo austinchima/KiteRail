@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/austinchima/kiterail/internal/auth"
-	"github.com/austinchima/kiterail/internal/types"
+	"github.com/austinchima/elodea/internal/auth"
+	"github.com/austinchima/elodea/internal/types"
 )
 
 // Invocation is one agent action normalized out of its wire protocol. Policy,

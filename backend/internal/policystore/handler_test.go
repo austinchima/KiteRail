@@ -15,8 +15,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 
-	"github.com/austinchima/kiterail/internal/opaengine"
-	"github.com/austinchima/kiterail/internal/types"
+	"github.com/austinchima/elodea/internal/opaengine"
+	"github.com/austinchima/elodea/internal/types"
 )
 
 // simulatePolicyDir writes a policy exercising every decision-validation path

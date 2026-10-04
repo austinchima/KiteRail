@@ -3,7 +3,7 @@ package dashboard
 import (
 	"testing"
 
-	"github.com/austinchima/kiterail/internal/db"
+	"github.com/austinchima/elodea/internal/db"
 	"github.com/stretchr/testify/assert"
 )
 
