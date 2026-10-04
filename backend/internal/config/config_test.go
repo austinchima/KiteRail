@@ -347,3 +347,45 @@ func TestValidate_Notify(t *testing.T) {
 	c.Notify.SlackWebhookURL = "http://hooks.slack.com/x"
 	assert.ErrorContains(t, c.Validate(), "https")
 }
+
+func TestValidate_Slack(t *testing.T) {
+	base := func() *Config {
+		c := defaultConfig()
+		c.TargetURL = "http://upstream.test"
+		c.APIKeys = map[string]string{"agentkey": "agent"}
+		c.ReviewerAPIKeys = map[string]string{"rvwkey": "jane"}
+		c.Slack = SlackConfig{BotToken: "xoxb-1", SigningSecret: "s", ChannelID: "C1", Reviewers: []string{"priya@corp.test"}}
+		return c
+	}
+	require.NoError(t, base().Validate())
+
+	cases := map[string]func(*Config){
+		"missing signing secret": func(c *Config) { c.Slack.SigningSecret = "" },
+		"missing channel":        func(c *Config) { c.Slack.ChannelID = "" },
+		"no reviewers":           func(c *Config) { c.Slack.Reviewers = nil },
+		"reviewer not an email":  func(c *Config) { c.Slack.Reviewers = []string{"priya"} },
+		"agent as reviewer": func(c *Config) {
+			c.APIKeys = map[string]string{"agentkey": "bot@corp.test"}
+			c.Slack.Reviewers = []string{"bot@corp.test"}
+		},
+		"partial setup": func(c *Config) { c.Slack = SlackConfig{ChannelID: "C1"} },
+	}
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			c := base()
+			mutate(c)
+			assert.Error(t, c.Validate())
+		})
+	}
+
+	c := base()
+	c.Environment = "production"
+	c.TLSTerminatedUpstream = true
+	c.PostgresDSN = "postgres://u:p@db.internal:5432/elodea?sslmode=require"
+	c.AllowedOrigins = []string{"https://console.corp.test"}
+	c.APIKeys = map[string]string{"agent-token-0123456789abcdef": "agent"}
+	c.ReviewerAPIKeys = map[string]string{"reviewer-token-0123456789abcdef": "jane"}
+	assert.ErrorContains(t, c.Validate(), "team_id", "production pins the workspace")
+	c.Slack.TeamID = "T0ELODEA"
+	assert.NoError(t, c.Validate())
+}

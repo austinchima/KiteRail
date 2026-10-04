@@ -270,6 +270,8 @@ Claims are atomic (`UPDATE ... FROM (SELECT ... FOR UPDATE SKIP LOCKED)`), and e
 
 Agents, reviewers, and admins hold distinct token sets (`api_keys`, `reviewer_api_keys`, `admin_api_keys`). Agents can only reach the proxy; approve/deny, ledger reads, and the dashboard require a reviewer or admin identity — which is also the only source of `resolved_by` on HITL decisions (body-supplied identities are ignored). Duplicate tokens across domains are rejected at startup.
 
+**From Slack**, a click on an Approve or Deny button is trusted only after three checks: Slack's request signature (HMAC over timestamp and body, five-minute window) from the configured workspace, the clicker's Slack email being on the configured reviewer list, and the same conflict-safe decision path the console uses. The ledger records the reviewer's email either way.
+
 With single sign-on, reviewers and admins sign in through the organization's OIDC identity provider instead. The server runs the Authorization Code flow with PKCE, maps IdP groups to roles, and gives the browser only an opaque `HttpOnly` cookie; the database stores a SHA-256 of the session token, never the token. Cookie-authenticated changes require a custom header (`X-Requested-With: elodea`) and an allowed `Origin`, which a cross-site form cannot forge. Agent routes never accept cookies.
 
 ### 7. Notifications that are neither lost nor duplicated
@@ -368,16 +370,15 @@ If you're a potential design partner and one of these blocks your pilot, open a 
 
 ## Roadmap
 
-Shipped since 1.0: Prometheus metrics, policy bundle version on every ledger entry, the policy cookbook, the full REST reference, hot reload, the protocol adapter boundary, MCP-native outcomes, single sign-on, and held-action notifications. Next, in priority order:
+Shipped since 1.0: Prometheus metrics, policy bundle version on every ledger entry, the policy cookbook, the full REST reference, hot reload, the protocol adapter boundary, MCP-native outcomes, single sign-on, held-action notifications, and approve/deny from Slack. Next, in priority order:
 
-1. **Approve from Slack.** Interactive approve and deny buttons in the notification, recorded under the reviewer's mapped identity.
-2. **Payment controls as first-class policy features.** Amount, velocity, and aggregate limits; maker-checker (the requester can never approve); dual approval above a threshold; beneficiary allowlists.
-3. **Two-identity authorization.** Extend the policy input with the human principal the agent acts for, so policies check both `input.agent` and `input.principal`.
-4. **Shadow mode** for policy rollouts: record what a new bundle *would* decide without enforcing it.
-5. **Policy packs** for common regimes (payments, cloud operations, data egress), mapped to the OWASP Top 10 for Agentic Applications.
-6. **More adapters** on the existing boundary: agent-to-agent (A2A) task traffic and function-calling gateways.
-7. **Developer experience:** an `elodea` CLI over the REST API, an embedded SQLite backend for single-node use, and published benchmarks.
-8. **Managed ledger anchoring** to a transparency log on a schedule.
+1. **Payment controls as first-class policy features.** Amount, velocity, and aggregate limits; maker-checker (the requester can never approve); dual approval above a threshold; beneficiary allowlists.
+2. **Two-identity authorization.** Extend the policy input with the human principal the agent acts for, so policies check both `input.agent` and `input.principal`.
+3. **Shadow mode** for policy rollouts: record what a new bundle *would* decide without enforcing it.
+4. **Policy packs** for common regimes (payments, cloud operations, data egress), mapped to the OWASP Top 10 for Agentic Applications.
+5. **More adapters** on the existing boundary: agent-to-agent (A2A) task traffic and function-calling gateways.
+6. **Developer experience:** an `elodea` CLI over the REST API, an embedded SQLite backend for single-node use, and published benchmarks.
+7. **Managed ledger anchoring** to a transparency log on a schedule.
 
 ### On sustainability
 

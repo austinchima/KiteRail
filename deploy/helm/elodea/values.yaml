@@ -32,6 +32,8 @@ config:
 #   oidc-client-secret (SSO only) the OIDC client secret
 #   slack-webhook-url  (notifications) Slack incoming-webhook URL
 #   webhook-secret     (notifications) HMAC secret for the generic webhook
+#   slack-bot-token    (Slack app) Bot User OAuth Token (xoxb-...)
+#   slack-signing-secret (Slack app) signing secret from the app's Basic Information
 # Secrets are mounted as files, never exposed as environment variables.
 secret:
   name: ""
@@ -42,6 +44,17 @@ secret:
   hasTargetAuthToken: false
   hasSlackWebhookURL: false
   hasWebhookSecret: false
+  hasSlackApp: false
+
+# Approve or deny held actions from Slack (needs secret.hasSlackApp). Create
+# the Slack app from deploy/slack/manifest.yaml. Slack must be able to reach
+# https://<elodea host>/integrations/slack/interactions, so expose that path
+# on your ingress; every request is verified with the signing secret.
+slack:
+  channelID: ""         # the reviewer channel, e.g. C0123456789 (invite the app)
+  teamID: ""            # your workspace ID, e.g. T0123456789 (required in production)
+  reviewers: []         # emails allowed to approve or deny from Slack
+  apiBase: ""           # https://slack-gov.com/api for GovSlack
 
 # Held-action notifications: tell reviewers the moment an action is held.
 # Slack needs secret.hasSlackWebhookURL; a generic webhook (PagerDuty,

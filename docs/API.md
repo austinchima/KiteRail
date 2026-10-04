@@ -76,6 +76,7 @@ With `oidc` configured, reviewers and admins sign in through the organisation's 
 | `GET` | `/api/v1/auth/config` | none | Which sign-in options the console should show |
 | `GET` | `/auth/login`, `/auth/callback` | none | Single sign-on round trip (browser redirects) |
 | `POST` | `/auth/logout` | session | End the SSO session |
+| `POST` | `/integrations/slack/interactions` | Slack signature | Approve or deny from a Slack message |
 | `POST` | `/` | agent | The proxy — governs MCP / JSON-RPC tool calls |
 | `GET` | `/api/v1/quarantine` | reviewer/admin | List HITL items by status |
 | `POST` | `/api/v1/quarantine/:id/approve` | reviewer/admin | Approve (durable worker replays) |
@@ -596,6 +597,20 @@ def verify(secret: bytes, headers, body: bytes) -> bool:
     expected = "sha256=" + hmac.new(secret, ts.encode() + b"." + body, hashlib.sha256).hexdigest()
     return hmac.compare_digest(expected, headers["X-Elodea-Signature"])
 ```
+
+---
+
+## Slack interactivity
+
+### `POST /integrations/slack/interactions`
+
+Receives Slack's button clicks when the Slack app is configured (`ELODEA_SLACK_*`). It is authenticated by Slack's request signature, not a bearer token:
+
+- `X-Slack-Signature` must equal `v0=` + hex `HMAC-SHA256(signing_secret, "v0:<X-Slack-Request-Timestamp>:<raw body>")`, and the timestamp must be within five minutes. Otherwise `401`.
+- The payload's workspace must match `ELODEA_SLACK_TEAM_ID` when set. Otherwise `403`.
+- The clicking user's email (from Slack's `users.info`; bots and deactivated accounts refused) must be in `ELODEA_SLACK_REVIEWERS`, or nothing changes.
+
+Valid clicks always get `200` within Slack's three-second limit. The decision is applied through the same path as `POST /api/v1/quarantine/:id/approve|deny` (conflict-safe, ledgered as `approved` / `denied` with the reviewer's email), and the message is then updated through Slack's `response_url`, which must be on `slack.com` or `slack-gov.com`.
 
 ---
 

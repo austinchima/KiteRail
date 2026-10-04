@@ -30,6 +30,7 @@ import (
 	"github.com/austinchima/kiterail/internal/policystore"
 	"github.com/austinchima/kiterail/internal/proxy"
 	"github.com/austinchima/kiterail/internal/quarantine"
+	"github.com/austinchima/kiterail/internal/slackapp"
 	"github.com/austinchima/kiterail/internal/sso"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
@@ -178,6 +179,11 @@ type httpDeps struct {
 	// policyVersion reports the active policy bundle fingerprint for /readyz.
 	policyVersion func() string
 
+	// slack receives Slack's interactivity requests (approve/deny buttons);
+	// nil when the Slack app is not configured. It authenticates each request
+	// by Slack's signature, not by a bearer token.
+	slack http.Handler
+
 	// sso serves SSO sign-in and resolves session cookies; nil when SSO is
 	// not configured, leaving bearer tokens as the only human credential.
 	sso ssoProvider
@@ -185,6 +191,14 @@ type httpDeps struct {
 	// metricsOnSeparateListener removes /metrics from the public mux because
 	// it is served on an internal-only listener instead.
 	metricsOnSeparateListener bool
+}
+
+// slackHandler avoids storing a typed nil *slackapp.App in an http.Handler.
+func slackHandler(app *slackapp.App) http.Handler {
+	if app == nil {
+		return nil
+	}
+	return app
 }
 
 // ssoProvider is the part of *sso.Service the HTTP layer uses.
@@ -272,6 +286,11 @@ func buildHTTPHandler(d httpDeps, logger *zap.Logger) http.Handler {
 	})
 
 	mux.Handle("/api/v1/health", publicChain(healthHandler))
+
+	// --- Slack interactivity (authenticated by Slack's request signature) ---
+	if d.slack != nil {
+		mux.Handle("/integrations/slack/interactions", publicChain(drainMiddleware(d.ready)(d.slack)))
+	}
 
 	// --- SSO sign-in (browser redirects; no prior authentication) ---
 	if d.sso != nil {
@@ -406,6 +425,18 @@ func main() {
 	}
 
 	quarantineHandler := quarantine.NewHandler(qStore, lStore, logger)
+
+	// Approve/deny from Slack goes through the same audited decision path
+	// as the console.
+	var slackApp *slackapp.App
+	if cfg.Slack.Enabled() {
+		slackApp = slackapp.New(slackapp.Config{
+			BotToken: cfg.Slack.BotToken, SigningSecret: cfg.Slack.SigningSecret,
+			ChannelID: cfg.Slack.ChannelID, TeamID: cfg.Slack.TeamID,
+			Reviewers: cfg.Slack.Reviewers, ConsoleURL: cfg.ConsoleURL,
+			APIBase: cfg.Slack.APIBase,
+		}, quarantineHandler, logger)
+	}
 	ledgerHandler := ledger.NewHandler(lStore, logger)
 	policyHandler := policystore.NewHandler(pStore, engine, logger)
 	dashboardHandler := dashboard.NewHandler(lStore, qStore, logger)
@@ -448,6 +479,7 @@ func main() {
 		ledger:         ledgerHandler,
 		policy:         policyHandler,
 		dashboard:      dashboardHandler,
+		slack:          slackHandler(slackApp),
 		identities:     identities,
 		rateLimitRPS:   cfg.RateLimitRPS,
 		rateLimitBurst: cfg.RateLimitBurst,
@@ -522,6 +554,9 @@ func main() {
 	}
 	if cfg.Notify.WebhookURL != "" {
 		channels = append(channels, notify.NewWebhook(cfg.Notify.WebhookURL, cfg.Notify.WebhookSecret))
+	}
+	if slackApp != nil {
+		channels = append(channels, slackApp)
 	}
 	if len(channels) > 0 {
 		go notify.NewWorker(db.New(dbConn), channels, cfg.ConsoleURL, logger).Run(workerCtx)

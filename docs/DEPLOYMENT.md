@@ -95,6 +95,24 @@ An agent waits while its action is held, so reviewers should hear about it immed
 
 If `networkPolicy.enabled`, allow egress to the webhook hosts on port 443. Watch `elodea_notifications_total{outcome="gave_up"}`: it counts notifications abandoned after 8 attempts.
 
+### Approve and deny from Slack
+
+The Slack app posts each held action to a reviewer channel with **Approve** and **Deny** buttons. A click is applied through the same audited path as the console and recorded in the ledger under the clicking person's email.
+
+1. Create the app at [api.slack.com/apps](https://api.slack.com/apps) → *Create New App* → *From a manifest*, paste [`deploy/slack/manifest.yaml`](../deploy/slack/manifest.yaml), and set `request_url` to `https://<elodea host>/integrations/slack/interactions`.
+2. Install it to the workspace, then invite it to the reviewer channel (`/invite @Elodea`).
+3. Add the **Bot User OAuth Token** as `slack-bot-token` and the **Signing Secret** as `slack-signing-secret` in the Elodea secret, and set `secret.hasSlackApp: true`.
+4. Set `slack.channelID`, `slack.teamID`, and `slack.reviewers` (the emails allowed to decide).
+5. Expose `/integrations/slack/interactions` on your ingress so Slack can reach it. Nothing else needs to be public.
+
+How a click is trusted:
+- **It came from Slack:** the request must carry a valid `X-Slack-Signature` over the timestamp and body, signed within the last five minutes, from the configured workspace.
+- **It came from a reviewer:** Elodea asks Slack for the clicker's email (bots and deactivated accounts are refused) and accepts the click only if that email is in `slack.reviewers`. A Slack account alone grants nothing.
+- **It's applied once:** an action already decided elsewhere is reported as such; the buttons are replaced with the outcome.
+
+Someone not on the list sees a private refusal and the buttons stay for a real reviewer. Denials from Slack carry the reason "Denied in Slack"; use the console to give a specific reason.
+
+
 ## Database
 
 - PostgreSQL 14+ with TLS (`sslmode=require` or stricter). Migrations run automatically at startup under an advisory lock, so concurrent rollouts are safe.
@@ -144,5 +162,6 @@ Stream the full chain to your SIEM with `GET /api/v1/ledger/export` (NDJSON, res
 - [ ] Policies delivered from version control; CI runs `opa check --strict` and `opa test`
 - [ ] Ledger head anchored externally on a schedule; verify job alerting on `valid == false`
 - [ ] Held-action notifications to Slack or a signed webhook, with `consoleURL` set
+- [ ] If reviewers decide from Slack: `slack.teamID` set, `slack.reviewers` limited to real reviewers, only `/integrations/slack/interactions` exposed publicly
 - [ ] Alerts from the monitoring table above
 - [ ] Release image verified with cosign (see `SECURITY.md`) and pinned by digest

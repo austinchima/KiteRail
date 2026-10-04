@@ -146,35 +146,61 @@ func reviewerIdentity(r *http.Request) (string, bool) {
 	return identity.ID, true
 }
 
-// approveEntry persists the human approval. Replay is NOT performed here —
-// the durable Worker picks the 'approved' entry up from Postgres and owns all
-// retry/state transitions, so a crash after this response loses nothing.
+// ErrAuditUnavailable means the decision was committed but its ledger entry
+// could not be written. Callers must not report plain success.
+var ErrAuditUnavailable = errors.New("decision recorded but audit unavailable")
+
+// Approve records reviewerID's approval of a held action and ledgers it.
+// Replay is NOT performed here: the durable Worker picks the 'approved' entry
+// up from Postgres and owns all retry/state transitions, so a crash after
+// this returns loses nothing. reviewerID must come from an authenticated
+// human identity (console session, bearer token, or a verified Slack user).
+func (h *Handler) Approve(ctx context.Context, id, reviewerID string) error {
+	// Fetch before marking so the ledger entry carries tool and payload context.
+	entry, err := h.store.Get(ctx, id)
+	if err != nil {
+		return err
+	}
+	if err := h.store.Approve(ctx, id, reviewerID); err != nil {
+		return err
+	}
+	// Record the human decision itself. The worker's write-ahead entry still
+	// guarantees the execution is ledgered, so a failure here is reported to
+	// the reviewer rather than silently swallowed.
+	return h.appendLedger(ctx, entry, reviewerID, "approved", "hitl_approval")
+}
+
+// Deny records reviewerID's denial of a held action and ledgers it.
+func (h *Handler) Deny(ctx context.Context, id, reviewerID, reason string) error {
+	entry, err := h.store.Get(ctx, id)
+	if err != nil {
+		return err
+	}
+	if err := h.store.Deny(ctx, id, reviewerID, reason); err != nil {
+		return err
+	}
+	return h.appendLedger(ctx, entry, reviewerID, "denied", "hitl_denial")
+}
+
+// writeDecisionError maps an Approve/Deny error to an HTTP response.
+func (h *Handler) writeDecisionError(w http.ResponseWriter, id, op string, err error) {
+	if errors.Is(err, ErrAuditUnavailable) {
+		http.Error(w, `{"error": "decision recorded but audit unavailable"}`, http.StatusServiceUnavailable)
+		return
+	}
+	h.writeStoreError(w, id, op, err)
+}
+
 func (h *Handler) approveEntry(w http.ResponseWriter, r *http.Request, id string) {
 	reviewerID, ok := reviewerIdentity(r)
 	if !ok {
 		http.Error(w, `{"error": "reviewer or admin role required"}`, http.StatusForbidden)
 		return
 	}
-
-	// Fetch before marking so the ledger entry carries tool and payload context.
-	entry, err := h.store.Get(r.Context(), id)
-	if err != nil {
-		h.writeStoreError(w, id, "get", err)
+	if err := h.Approve(r.Context(), id, reviewerID); err != nil {
+		h.writeDecisionError(w, id, "approve", err)
 		return
 	}
-
-	if err := h.store.Approve(r.Context(), id, reviewerID); err != nil {
-		h.writeStoreError(w, id, "approve", err)
-		return
-	}
-
-	// Record the human decision itself. The worker's write-ahead entry still
-	// guarantees the execution is ledgered, so a failure here is reported to
-	// the reviewer rather than silently swallowed.
-	if !h.appendLedger(w, r, entry, reviewerID, "approved", "hitl_approval") {
-		return
-	}
-
 	json.NewEncoder(w).Encode(map[string]string{"status": "approved", "id": id})
 }
 
@@ -203,33 +229,21 @@ func (h *Handler) denyEntry(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 
-	entry, err := h.store.Get(r.Context(), id)
-	if err != nil {
-		h.writeStoreError(w, id, "get", err)
+	if err := h.Deny(r.Context(), id, reviewerID, body.Reason); err != nil {
+		h.writeDecisionError(w, id, "deny", err)
 		return
 	}
-
-	if err := h.store.Deny(r.Context(), id, reviewerID, body.Reason); err != nil {
-		h.writeStoreError(w, id, "deny", err)
-		return
-	}
-
-	// Record HITL denial in tamper-evident ledger.
-	if !h.appendLedger(w, r, entry, reviewerID, "denied", "hitl_denial") {
-		return
-	}
-
 	json.NewEncoder(w).Encode(map[string]string{"status": "denied", "id": id})
 }
 
-// appendLedger records a reviewer decision. On failure it answers 503 and
-// returns false: the state change has committed, but the reviewer must not be
-// told the decision succeeded while its audit record is missing.
-func (h *Handler) appendLedger(w http.ResponseWriter, r *http.Request, entry db.QuarantineEntry, reviewerID, decision, rule string) bool {
+// appendLedger records a reviewer decision. On failure it returns
+// ErrAuditUnavailable: the state change has committed, but the reviewer must
+// not be told the decision succeeded while its audit record is missing.
+func (h *Handler) appendLedger(ctx context.Context, entry db.QuarantineEntry, reviewerID, decision, rule string) error {
 	if h.lStore == nil {
-		return true
+		return nil
 	}
-	if err := h.lStore.Append(r.Context(), db.LedgerEntry{
+	if err := h.lStore.Append(ctx, db.LedgerEntry{
 		Agent:       reviewerID,
 		Tool:        entry.ToolName,
 		Decision:    decision,
@@ -238,8 +252,7 @@ func (h *Handler) appendLedger(w http.ResponseWriter, r *http.Request, entry db.
 		RequestID:   entry.ID,
 	}); err != nil {
 		h.logger.Error("failed to write reviewer ledger entry", zap.String("id", entry.ID), zap.String("decision", decision), zap.Error(err))
-		http.Error(w, `{"error": "decision recorded but audit unavailable"}`, http.StatusServiceUnavailable)
-		return false
+		return ErrAuditUnavailable
 	}
-	return true
+	return nil
 }
