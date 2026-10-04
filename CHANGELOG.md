@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Ships as **2.0.0**: the rename changes header, metric, and policy-package names (see *Changed*).
+Ships as **2.0.0**: the rename changes header, metric, and policy-package names (see *Changed*). It also carries the 1.2.0 work below, which was never tagged as a separate release.
 
 ### Added
 - **Single sign-on for reviewers and admins (OIDC).** Works with Okta, Entra ID, Auth0, Keycloak and any OIDC provider. The server runs the Authorization Code flow with PKCE and gives the browser only an opaque `HttpOnly` session cookie. Roles come from IdP groups (`oidc.reviewer_groups`, `oidc.admin_groups`), and approvals and denials are recorded under the verified identity. Sessions are server-side (migration `008_sso.sql`), expire after 8h or 1h idle by default, and are revoked on sign-out. Session-authenticated changes require `X-Requested-With: elodea` and an allowed `Origin`. Agents still authenticate with bearer tokens only. Static reviewer/admin tokens become optional break-glass access. Configure with `ELODEA_OIDC_*` or the Helm `oidc` values; see `docs/DEPLOYMENT.md`.
@@ -18,7 +18,12 @@ Ships as **2.0.0**: the rename changes header, metric, and policy-package names 
 - Docs: SSO and notification guides in `docs/DEPLOYMENT.md`, webhook event format and signature check in `docs/API.md`, an updated architecture (package map, replay sequence, notification outbox) and a current roadmap in `docs/ARCHITECTURE.md`.
 
 ### Fixed
-- `SECURITY.md` pointed vulnerability reports at a repository that doesn't exist.
+- `SECURITY.md` pointed vulnerability reports at a repository that doesn't exist, and the README and supported-versions table called 1.2.0 a release although it was never tagged.
+- CI tested policies with OPA 1.18.2 while the server embeds OPA 1.21.1; both now use 1.21.1.
+
+### Dependencies
+- OPA 1.21.1, go-jose 4.1.5, testify 1.12.1 and two more Go modules; GitHub Actions moved to their Node 24 releases (`checkout` v7, `setup-go` v7, `setup-helm` v5, `setup-qemu-action` v4, `attest-build-provenance` v4, `action-gh-release` v3); `trivy-action` pinned to v0.36.0 by commit.
+- Dependabot now targets `dev`, and holds the Go builder image on Go 1.26 (patch and digest updates only) until `go.mod`, CI and golangci-lint move together.
 - Slack notifications escape agent-supplied text in the message preview as well as the body, so a tool name cannot trigger `@channel`.
 
 ### Changed
@@ -35,7 +40,7 @@ Ships as **2.0.0**: the rename changes header, metric, and policy-package names 
 - Applied database migrations, the `kiterail.ledger_maintenance` setting, and the ledger trigger names are unchanged.
 - The Go module path and repository URL stay `github.com/austinchima/kiterail` until the repository itself is renamed.
 
-## [1.2.0] - 2026-10-03
+## [1.2.0] - not released separately (ships in 2.0.0)
 
 Production-readiness release: closes two policy-bypass paths, makes the audit
 trail complete and externally verifiable, and makes the enforcement core
