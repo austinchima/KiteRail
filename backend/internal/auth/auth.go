@@ -1,4 +1,4 @@
-// Package auth implements role-based authentication for KiteRail.
+// Package auth implements role-based authentication for Elodea.
 //
 // Three trust domains exist and MUST NOT share credentials:
 //
@@ -30,7 +30,7 @@ type Identity struct {
 
 type contextKey string
 
-const identityContextKey contextKey = "kiterail_identity"
+const identityContextKey contextKey = "elodea_identity"
 
 // FromContext returns the authenticated identity, if any.
 func FromContext(ctx context.Context) (Identity, bool) {
@@ -58,7 +58,7 @@ func AgentFromContext(ctx context.Context) string {
 // naive byte-by-byte prefix comparison — but it's still input-dependent
 // (bucket chain length, hash collisions) in ways that are cheap to close off
 // entirely. This is O(n) in the number of configured identities, which is
-// the right trade-off for the tens-to-low-hundreds of API keys KiteRail
+// the right trade-off for the tens-to-low-hundreds of API keys Elodea
 // expects; it is NOT the right approach once you're validating against
 // thousands of keys; at that scale switch to HMAC-derived tokens you can
 // verify without a lookup table at all.
@@ -106,6 +106,56 @@ func Middleware(identities map[string]Identity, logger *zap.Logger, next http.Ha
 		ctx := context.WithValue(r.Context(), identityContextKey, identity)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+// SessionAuthenticator resolves a browser session (SSO sign-in) to a human
+// identity. It is implemented by package sso.
+type SessionAuthenticator interface {
+	AuthenticateSession(r *http.Request) (Identity, bool)
+}
+
+// CSRFHeader must accompany every state-changing request authenticated by a
+// session cookie. Browsers only let a page add a custom header after a CORS
+// preflight, which only allowed origins pass, so a forged cross-site form or
+// image request cannot carry it.
+const CSRFHeader = "X-Requested-With"
+
+// CSRFHeaderValue is the value the console sends in CSRFHeader.
+const CSRFHeaderValue = "elodea"
+
+// HumanMiddleware authenticates the human trust domain (reviewers, admins).
+// A Bearer token is checked exactly as Middleware does; without one, an SSO
+// session cookie is accepted. Session-authenticated requests that change
+// state must also carry CSRFHeader and, when present, an allowed Origin.
+// Agent routes never use this: an agent cannot authenticate with a cookie.
+func HumanMiddleware(identities map[string]Identity, sessions SessionAuthenticator, originAllowed func(string) bool, logger *zap.Logger, next http.Handler) http.Handler {
+	bearer := Middleware(identities, logger, next)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "" || sessions == nil {
+			bearer.ServeHTTP(w, r)
+			return
+		}
+		identity, ok := sessions.AuthenticateSession(r)
+		if !ok {
+			w.Header().Set("WWW-Authenticate", "Bearer")
+			http.Error(w, `{"error": "sign-in required"}`, http.StatusUnauthorized)
+			return
+		}
+		if !safeMethod(r.Method) {
+			origin := r.Header.Get("Origin")
+			if r.Header.Get(CSRFHeader) != CSRFHeaderValue || (origin != "" && !originAllowed(origin)) {
+				logger.Warn("rejected session request without CSRF protection",
+					zap.String("identity", identity.ID), zap.String("path", r.URL.Path), zap.String("origin", origin))
+				http.Error(w, `{"error": "cross-site request rejected"}`, http.StatusForbidden)
+				return
+			}
+		}
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), identityContextKey, identity)))
+	})
+}
+
+func safeMethod(method string) bool {
+	return method == http.MethodGet || method == http.MethodHead || method == http.MethodOptions
 }
 
 // RequireRole wraps a handler so it only accepts identities holding one of

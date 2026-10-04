@@ -1,9 +1,12 @@
 {
     "jsonrpc": "2.0",
     "id": 1,
-    "method": "stripe.charge.refund",
+    "method": "tools/call",
     "params": {
-        "charge_id": "ch_123",
-        "amount": 1500
+        "name": "stripe.charge.refund",
+        "arguments": {
+            "charge_id": "ch_123",
+            "amount": 1500
+        }
     }
 }

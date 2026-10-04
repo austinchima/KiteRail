@@ -2,6 +2,8 @@ package quarantine
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -58,6 +60,33 @@ func NewHandler(store StoreAPI, lStore *ledger.Store, logger *zap.Logger) *Handl
 	}
 }
 
+// validStatuses are the quarantine states a list request may filter on.
+var validStatuses = map[string]bool{
+	StatusPending: true, StatusApproved: true, StatusReplaying: true,
+	StatusReplayed: true, StatusReplayFailed: true, StatusDenied: true,
+}
+
+// payloadHash is the ledger join key between the proxy's original quarantine
+// decision (which hashes the same request body) and every HITL entry after it.
+func payloadHash(payload []byte) string {
+	sum := sha256.Sum256(payload)
+	return hex.EncodeToString(sum[:])
+}
+
+// writeStoreError maps store errors to HTTP status codes. Only a genuinely
+// missing item is a 404; database failures must surface as 5xx.
+func (h *Handler) writeStoreError(w http.ResponseWriter, id, op string, err error) {
+	switch {
+	case errors.Is(err, ErrNotFound):
+		http.Error(w, `{"error": "quarantine item not found"}`, http.StatusNotFound)
+	case errors.Is(err, ErrAlreadyResolved):
+		http.Error(w, `{"error": "quarantine item already resolved"}`, http.StatusConflict)
+	default:
+		h.logger.Error("quarantine store failure", zap.String("op", op), zap.String("id", id), zap.Error(err))
+		http.Error(w, `{"error": "internal server error"}`, http.StatusInternalServerError)
+	}
+}
+
 // ServeHTTP routes quarantine API requests.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
@@ -86,6 +115,10 @@ func (h *Handler) listPending(w http.ResponseWriter, r *http.Request) {
 	if status == "" {
 		status = StatusPending
 	}
+	if !validStatuses[status] {
+		http.Error(w, `{"error": "unknown status"}`, http.StatusBadRequest)
+		return
+	}
 	entries, err := h.store.List(r.Context(), status)
 	if err != nil {
 		h.logger.Error("failed to list quarantine", zap.Error(err))
@@ -98,8 +131,7 @@ func (h *Handler) listPending(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) getEntry(w http.ResponseWriter, r *http.Request, id string) {
 	entry, err := h.store.Get(r.Context(), id)
 	if err != nil {
-		h.logger.Error("failed to get quarantine entry", zap.Error(err))
-		http.Error(w, `{"error": "not found"}`, http.StatusNotFound)
+		h.writeStoreError(w, id, "get", err)
 		return
 	}
 	json.NewEncoder(w).Encode(entry)
@@ -124,20 +156,22 @@ func (h *Handler) approveEntry(w http.ResponseWriter, r *http.Request, id string
 		return
 	}
 
-	// Fetch before marking so we can log tool context on failure paths.
-	if _, err := h.store.Get(r.Context(), id); err != nil {
-		h.logger.Error("quarantine entry not found", zap.String("id", id), zap.Error(err))
-		http.Error(w, `{"error": "quarantine item not found"}`, http.StatusNotFound)
+	// Fetch before marking so the ledger entry carries tool and payload context.
+	entry, err := h.store.Get(r.Context(), id)
+	if err != nil {
+		h.writeStoreError(w, id, "get", err)
 		return
 	}
 
 	if err := h.store.Approve(r.Context(), id, reviewerID); err != nil {
-		if errors.Is(err, ErrAlreadyResolved) {
-			http.Error(w, `{"error": "quarantine item already resolved"}`, http.StatusConflict)
-			return
-		}
-		h.logger.Error("failed to approve", zap.String("id", id), zap.Error(err))
-		http.Error(w, `{"error": "failed to approve"}`, http.StatusInternalServerError)
+		h.writeStoreError(w, id, "approve", err)
+		return
+	}
+
+	// Record the human decision itself. The worker's write-ahead entry still
+	// guarantees the execution is ledgered, so a failure here is reported to
+	// the reviewer rather than silently swallowed.
+	if !h.appendLedger(w, r, entry, reviewerID, "approved", "hitl_approval") {
 		return
 	}
 
@@ -169,29 +203,43 @@ func (h *Handler) denyEntry(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 
+	entry, err := h.store.Get(r.Context(), id)
+	if err != nil {
+		h.writeStoreError(w, id, "get", err)
+		return
+	}
+
 	if err := h.store.Deny(r.Context(), id, reviewerID, body.Reason); err != nil {
-		if errors.Is(err, ErrAlreadyResolved) {
-			http.Error(w, `{"error": "quarantine item already resolved"}`, http.StatusConflict)
-			return
-		}
-		h.logger.Error("failed to deny", zap.String("id", id), zap.Error(err))
-		http.Error(w, `{"error": "failed to deny"}`, http.StatusNotFound)
+		h.writeStoreError(w, id, "deny", err)
 		return
 	}
 
 	// Record HITL denial in tamper-evident ledger.
-	if h.lStore != nil {
-		if err := h.lStore.Append(r.Context(), db.LedgerEntry{
-			Agent:       reviewerID,
-			Tool:        "quarantine.deny",
-			Decision:    "denied",
-			PolicyRule:  "hitl_denial",
-			PayloadHash: id,
-			RequestID:   id,
-		}); err != nil {
-			h.logger.Error("failed to write denial ledger entry", zap.String("id", id), zap.Error(err))
-		}
+	if !h.appendLedger(w, r, entry, reviewerID, "denied", "hitl_denial") {
+		return
 	}
 
 	json.NewEncoder(w).Encode(map[string]string{"status": "denied", "id": id})
+}
+
+// appendLedger records a reviewer decision. On failure it answers 503 and
+// returns false: the state change has committed, but the reviewer must not be
+// told the decision succeeded while its audit record is missing.
+func (h *Handler) appendLedger(w http.ResponseWriter, r *http.Request, entry db.QuarantineEntry, reviewerID, decision, rule string) bool {
+	if h.lStore == nil {
+		return true
+	}
+	if err := h.lStore.Append(r.Context(), db.LedgerEntry{
+		Agent:       reviewerID,
+		Tool:        entry.ToolName,
+		Decision:    decision,
+		PolicyRule:  rule,
+		PayloadHash: payloadHash(entry.Payload),
+		RequestID:   entry.ID,
+	}); err != nil {
+		h.logger.Error("failed to write reviewer ledger entry", zap.String("id", entry.ID), zap.String("decision", decision), zap.Error(err))
+		http.Error(w, `{"error": "decision recorded but audit unavailable"}`, http.StatusServiceUnavailable)
+		return false
+	}
+	return true
 }

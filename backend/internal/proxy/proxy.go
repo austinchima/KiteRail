@@ -54,7 +54,7 @@ type EventPublisher interface {
 
 // QuarantineStore defines the interface for the quarantine store.
 type QuarantineStore interface {
-	Create(ctx context.Context, agentID, toolName string, payload []byte, headers http.Header) (string, error)
+	Create(ctx context.Context, agentID, toolName string, payload []byte, headers http.Header, rule, explanation string) (string, error)
 }
 
 // LedgerStore defines the interface for appending ledger audit entries.
@@ -79,6 +79,11 @@ type Handler struct {
 	quarantineStore QuarantineStore
 	ledgerStore     LedgerStore
 	maxBodyBytes    int64
+	adapter         Adapter
+	// upstreamHeaderTimeout bounds how long an allowed call waits for the
+	// upstream to start responding. Once it does, a streamed response (SSE,
+	// chunked tool output) may run as long as the upstream keeps sending.
+	upstreamHeaderTimeout time.Duration
 
 	reverseProxy *httputil.ReverseProxy
 }
@@ -99,6 +104,9 @@ func NewHandler(logger *zap.Logger, targetURL string, engine OPAEngine, publishe
 		quarantineStore: store,
 		ledgerStore:     lStore,
 		maxBodyBytes:    1 << 20,
+		adapter:         MCPAdapter{},
+
+		upstreamHeaderTimeout: 30 * time.Second,
 	}
 
 	// Rewrite is the Go 1.26-supported reverse-proxy hook. It performs the
@@ -108,7 +116,15 @@ func NewHandler(logger *zap.Logger, targetURL string, engine OPAEngine, publishe
 	rp := &httputil.ReverseProxy{
 		Rewrite: func(request *httputil.ProxyRequest) {
 			request.SetURL(u)
-			request.Out.Header.Del("Authorization")
+			// Policy evaluates only the body, so the agent must not choose the
+			// upstream path or query: pin both to the configured target, the
+			// same URL approved replays are sent to.
+			request.Out.URL.Path = u.Path
+			request.Out.URL.RawPath = u.RawPath
+			request.Out.URL.RawQuery = u.RawQuery
+			StripAgentControlledHeaders(request.Out.Header)
+			// Server-asserted identity, the same header approved replays carry.
+			request.Out.Header.Set("X-Elodea-Agent", auth.AgentFromContext(request.In.Context()))
 			if h.targetAuthToken != "" {
 				request.Out.Header.Set("Authorization", "Bearer "+h.targetAuthToken)
 			}
@@ -123,7 +139,37 @@ func NewHandler(logger *zap.Logger, targetURL string, engine OPAEngine, publishe
 	for _, opt := range opts {
 		opt(h)
 	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.ResponseHeaderTimeout = h.upstreamHeaderTimeout
+	rp.Transport = transport
 	return h, nil
+}
+
+// WithUpstreamHeaderTimeout bounds the wait for upstream response headers.
+func WithUpstreamHeaderTimeout(d time.Duration) func(*Handler) {
+	return func(h *Handler) {
+		if d > 0 {
+			h.upstreamHeaderTimeout = d
+		}
+	}
+}
+
+// StripAgentControlledHeaders removes headers an agent must never be able to
+// assert to the upstream: its own credentials and cookies, Elodea's
+// execution metadata (X-Elodea-Approved-By would otherwise let an ALLOW call
+// impersonate a human-approved replay), and the replay Idempotency-Key.
+func StripAgentControlledHeaders(header http.Header) {
+	for name := range header {
+		canonical := http.CanonicalHeaderKey(name)
+		switch {
+		case canonical == "Authorization", canonical == "Proxy-Authorization",
+			canonical == "Cookie", canonical == "Idempotency-Key",
+			strings.HasPrefix(canonical, "X-Elodea-"),
+			strings.HasPrefix(canonical, "X-Kiterail-"): // pre-rename names
+
+			delete(header, name)
+		}
+	}
 }
 
 // WithTargetAuthToken configures the service credential sent to the upstream.
@@ -349,40 +395,31 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ing, verr := validateIngress(body)
-	if verr != nil {
-		h.logger.Warn("rejected malformed ingress",
-			zap.Error(verr),
+	ing, ierr := h.adapter.Parse(r, body)
+	if ierr != nil {
+		h.logger.Warn("rejected ingress before policy evaluation",
+			zap.String("protocol", h.adapter.Name()),
+			zap.Int("code", ierr.Code),
+			zap.String("reason", ierr.Message),
 			zap.String("agent", auth.AgentFromContext(r.Context())),
 			zap.String("remote", r.RemoteAddr),
 		)
 		metrics.DecisionsTotal.WithLabelValues("reject").Inc()
-		ingressError(w, http.StatusBadRequest, codeInvalidRequest, verr.Error(), ing.responseID)
-		return
-	}
-
-	if herr := validateMirroredHeaders(r, ing); herr != nil {
-		h.logger.Warn("rejected contradictory MCP metadata",
-			zap.Error(herr),
-			zap.String("agent", auth.AgentFromContext(r.Context())),
-			zap.String("remote", r.RemoteAddr),
-		)
-		metrics.DecisionsTotal.WithLabelValues("reject").Inc()
-		// -32020 BEFORE OPA evaluation: policy input must never be
-		// attacker-spoofable via headers.
-		ingressError(w, http.StatusBadRequest, codeHeaderBodyMismatch, herr.Error(), ing.responseID)
+		h.adapter.WriteIngressError(w, r, ierr)
 		return
 	}
 
 	input := EvalInput{
-		Tool:      ing.tool,
-		Arguments: ing.arguments,
-		Agent:     auth.AgentFromContext(r.Context()),
-		Timestamp: time.Now(),
+		Protocol:        ing.Protocol,
+		ProtocolVersion: ing.ProtocolVersion,
+		Tool:            ing.Tool,
+		Arguments:       ing.Arguments,
+		Agent:           auth.AgentFromContext(r.Context()),
+		Timestamp:       time.Now(),
 		// RawMethod is the JSON-RPC protocol method from the validated body
 		// ("tools/call", or the actual method for other calls) — never the
 		// HTTP method, which is transport metadata, not policy input.
-		RawMethod: ing.method,
+		RawMethod: ing.Method,
 	}
 
 	start := time.Now()
@@ -413,13 +450,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Audit guarantee: every evaluated decision is appended to the tamper-
 	// evident ledger BEFORE execution, and a ledger failure fails closed.
 	entry := db.LedgerEntry{
-		Timestamp:   time.Now(),
-		Agent:       input.Agent,
-		Tool:        input.Tool,
-		Decision:    string(decision.Action),
-		PolicyRule:  decision.Rule,
-		PayloadHash: payloadHash,
-		RequestID:   ing.requestID,
+		Timestamp:     time.Now(),
+		Agent:         input.Agent,
+		Tool:          input.Tool,
+		Decision:      string(decision.Action),
+		PolicyRule:    decision.Rule,
+		PayloadHash:   payloadHash,
+		RequestID:     ing.RequestID,
+		PolicyVersion: decision.PolicyVersion,
 	}
 	if h.ledgerStore != nil {
 		if err := h.ledgerStore.Append(r.Context(), entry); err != nil {
@@ -443,6 +481,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			h.logger.Error("Failed to publish audit event", zap.Error(err))
 		}
 		r.Body = io.NopCloser(bytes.NewBuffer(body))
+		// The server-wide WriteTimeout would cut off long streamed tool
+		// results mid-response. A dead upstream is still bounded by
+		// upstreamHeaderTimeout; a live stream may continue.
+		_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
 		h.reverseProxy.ServeHTTP(w, r)
 	case types.ActionDeny:
 		if err := h.publisher.PublishAudit(r.Context(), map[string]interface{}{
@@ -455,12 +497,21 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}); err != nil {
 			h.logger.Error("Failed to publish audit event", zap.Error(err))
 		}
-		w.WriteHeader(http.StatusForbidden)
-		json.NewEncoder(w).Encode(map[string]string{"error": "Denied by policy", "explanation": decision.Explanation})
+		h.adapter.WriteDeny(w, r, ing, decision)
 	case types.ActionQuarantine:
-		id, err := h.quarantineStore.Create(r.Context(), input.Agent, input.Tool, body, mcp.CaptureReplayHeaders(r.Header))
+		id, err := h.quarantineStore.Create(r.Context(), input.Agent, input.Tool, body, mcp.CaptureReplayHeaders(r.Header), decision.Rule, decision.Explanation)
 		if err != nil {
 			h.logger.Error("Failed to store quarantine", zap.Error(err))
+			// The quarantine decision is already ledgered; record that the
+			// item was never stored so the audit trail has no phantom entry.
+			if h.ledgerStore != nil {
+				failed := entry
+				failed.Timestamp = time.Now()
+				failed.Decision = "quarantine_store_failed"
+				if lerr := h.ledgerStore.Append(r.Context(), failed); lerr != nil {
+					h.logger.Error("Failed to ledger quarantine store failure", zap.Error(lerr))
+				}
+			}
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			return
 		}
@@ -469,13 +520,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			"agent":         input.Agent,
 			"tool":          input.Tool,
 			"rule":          decision.Rule,
-			"request_id":    ing.requestID,
+			"request_id":    ing.RequestID,
 			"timestamp":     time.Now(),
 		}); err != nil {
 			h.logger.Error("Failed to publish quarantine event", zap.Error(err))
 		}
-		w.WriteHeader(http.StatusAccepted)
-		json.NewEncoder(w).Encode(map[string]string{"quarantine_id": id, "status": "quarantined"})
+		h.adapter.WriteQuarantine(w, r, ing, id, decision)
 	default:
 		h.logger.Error("Unknown action", zap.String("action", string(decision.Action)))
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)

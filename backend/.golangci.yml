@@ -1,4 +1,4 @@
-# golangci-lint v2 configuration for KiteRail.
+# golangci-lint v2 configuration for Elodea.
 # Default linter set (errcheck, govet, ineffassign, staticcheck, unused).
 # errcheck exclusions are limited to error-ignoring idioms that are standard
 # across the Go ecosystem (deferred Close, deferred Rollback after Commit,

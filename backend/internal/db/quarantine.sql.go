@@ -48,7 +48,7 @@ UPDATE quarantine AS q
 SET status = 'replaying'
 FROM candidates
 WHERE q.id = candidates.id AND q.status = 'approved'
-RETURNING q.id, q.agent_id, q.tool_name, q.payload, q.status, q.created_at, q.resolved_at, q.resolved_by, q.reason, q.attempts, q.replayed_at, q.request_headers
+RETURNING q.id, q.agent_id, q.tool_name, q.payload, q.status, q.created_at, q.resolved_at, q.resolved_by, q.reason, q.attempts, q.replayed_at, q.request_headers, q.policy_rule, q.explanation
 `
 
 func (q *Queries) ClaimApprovedForReplay(ctx context.Context, limit int32) ([]Quarantine, error) {
@@ -73,6 +73,8 @@ func (q *Queries) ClaimApprovedForReplay(ctx context.Context, limit int32) ([]Qu
 			&i.Attempts,
 			&i.ReplayedAt,
 			&i.RequestHeaders,
+			&i.PolicyRule,
+			&i.Explanation,
 		); err != nil {
 			return nil, err
 		}
@@ -88,8 +90,8 @@ func (q *Queries) ClaimApprovedForReplay(ctx context.Context, limit int32) ([]Qu
 }
 
 const createQuarantineEntry = `-- name: CreateQuarantineEntry :one
-INSERT INTO quarantine (agent_id, tool_name, payload, status, created_at, request_headers)
-VALUES ($1, $2, $3, 'pending', $4, $5) RETURNING id::text
+INSERT INTO quarantine (agent_id, tool_name, payload, status, created_at, request_headers, policy_rule, explanation)
+VALUES ($1, $2, $3, 'pending', $4, $5, $6, $7) RETURNING id::text
 `
 
 type CreateQuarantineEntryParams struct {
@@ -98,6 +100,8 @@ type CreateQuarantineEntryParams struct {
 	Payload        []byte          `json:"payload"`
 	CreatedAt      time.Time       `json:"created_at"`
 	RequestHeaders json.RawMessage `json:"request_headers"`
+	PolicyRule     string          `json:"policy_rule"`
+	Explanation    string          `json:"explanation"`
 }
 
 func (q *Queries) CreateQuarantineEntry(ctx context.Context, arg CreateQuarantineEntryParams) (string, error) {
@@ -107,6 +111,8 @@ func (q *Queries) CreateQuarantineEntry(ctx context.Context, arg CreateQuarantin
 		arg.Payload,
 		arg.CreatedAt,
 		arg.RequestHeaders,
+		arg.PolicyRule,
+		arg.Explanation,
 	)
 	var id string
 	err := row.Scan(&id)
@@ -137,7 +143,7 @@ func (q *Queries) DenyQuarantineEntry(ctx context.Context, arg DenyQuarantineEnt
 }
 
 const getQuarantineEntry = `-- name: GetQuarantineEntry :one
-SELECT id, agent_id, tool_name, payload, status, created_at, resolved_at, resolved_by, reason, attempts, replayed_at, request_headers FROM quarantine WHERE id = $1::uuid
+SELECT id, agent_id, tool_name, payload, status, created_at, resolved_at, resolved_by, reason, attempts, replayed_at, request_headers, policy_rule, explanation FROM quarantine WHERE id = $1::uuid
 `
 
 func (q *Queries) GetQuarantineEntry(ctx context.Context, dollar_1 uuid.UUID) (Quarantine, error) {
@@ -156,12 +162,14 @@ func (q *Queries) GetQuarantineEntry(ctx context.Context, dollar_1 uuid.UUID) (Q
 		&i.Attempts,
 		&i.ReplayedAt,
 		&i.RequestHeaders,
+		&i.PolicyRule,
+		&i.Explanation,
 	)
 	return i, err
 }
 
 const getQuarantineEntryForReplay = `-- name: GetQuarantineEntryForReplay :one
-SELECT id, agent_id, tool_name, payload, status, created_at, resolved_at, resolved_by, reason, attempts, replayed_at, request_headers FROM quarantine WHERE id = $1::uuid
+SELECT id, agent_id, tool_name, payload, status, created_at, resolved_at, resolved_by, reason, attempts, replayed_at, request_headers, policy_rule, explanation FROM quarantine WHERE id = $1::uuid
 `
 
 func (q *Queries) GetQuarantineEntryForReplay(ctx context.Context, dollar_1 uuid.UUID) (Quarantine, error) {
@@ -180,12 +188,14 @@ func (q *Queries) GetQuarantineEntryForReplay(ctx context.Context, dollar_1 uuid
 		&i.Attempts,
 		&i.ReplayedAt,
 		&i.RequestHeaders,
+		&i.PolicyRule,
+		&i.Explanation,
 	)
 	return i, err
 }
 
 const listQuarantineByStatus = `-- name: ListQuarantineByStatus :many
-SELECT id, agent_id, tool_name, payload, status, created_at, resolved_at, resolved_by, reason, attempts, replayed_at, request_headers FROM quarantine WHERE status = $1
+SELECT id, agent_id, tool_name, payload, status, created_at, resolved_at, resolved_by, reason, attempts, replayed_at, request_headers, policy_rule, explanation FROM quarantine WHERE status = $1 ORDER BY created_at, id LIMIT 500
 `
 
 func (q *Queries) ListQuarantineByStatus(ctx context.Context, status string) ([]Quarantine, error) {
@@ -210,6 +220,8 @@ func (q *Queries) ListQuarantineByStatus(ctx context.Context, status string) ([]
 			&i.Attempts,
 			&i.ReplayedAt,
 			&i.RequestHeaders,
+			&i.PolicyRule,
+			&i.Explanation,
 		); err != nil {
 			return nil, err
 		}
@@ -246,7 +258,7 @@ func (q *Queries) MarkReplayed(ctx context.Context, dollar_1 uuid.UUID) (sql.Res
 }
 
 const recoverStuckReplays = `-- name: RecoverStuckReplays :execrows
-UPDATE quarantine SET status = 'approved' WHERE status = 'replaying'
+UPDATE quarantine SET status = 'approved', attempts = attempts + 1 WHERE status = 'replaying'
 `
 
 func (q *Queries) RecoverStuckReplays(ctx context.Context) (int64, error) {

@@ -16,12 +16,13 @@ package main
 //	Inv 8  MCP metadata parity: header/body contradiction → 400/-32020 before OPA;
 //	                           matching mirrored headers ride through to the upstream
 //
-// The whole file skips unless KITERAIL_POSTGRES_DSN (or QUARANTINE_TEST_DSN)
+// The whole file skips unless ELODEA_POSTGRES_DSN (or QUARANTINE_TEST_DSN)
 // points at a migrated database — same gate as every other integration test.
 
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -57,7 +58,7 @@ const (
 
 // e2ePolicyMain mirrors policies/main.rego: a decisions-set aggregator where
 // the most restrictive action wins deterministically.
-const e2ePolicyMain = `package kiterail.authz
+const e2ePolicyMain = `package elodea.authz
 
 import rego.v1
 
@@ -74,7 +75,7 @@ decision := result if {
 `
 
 // e2ePolicyRules gives the harness three tools, one per decision action.
-const e2ePolicyRules = `package kiterail.authz
+const e2ePolicyRules = `package elodea.authz
 
 import rego.v1
 
@@ -93,7 +94,7 @@ decisions contains {"action": "deny", "rule": "deny_dangerous_tool", "explanatio
 
 type e2eEnv struct {
 	t            *testing.T
-	server       *httptest.Server // KiteRail itself
+	server       *httptest.Server // Elodea itself
 	upstream     *httptest.Server // fake MCP upstream
 	upstreamMu   sync.Mutex
 	upstreamReqs []*http.Request // cloned requests (headers safe to read later)
@@ -127,6 +128,14 @@ func (e *e2eEnv) upstreamAuth(i int) string {
 func (e *e2eEnv) upstreamCount() int { return int(e.upstreamN.Load()) }
 
 func newE2EEnv(t *testing.T) *e2eEnv {
+	t.Helper()
+	return newE2EEnvWith(t, nil)
+}
+
+// newE2EEnvWith lets a test adjust the HTTP dependencies (for example, to
+// plug in SSO) before the server starts. The adjust hook receives the live
+// database so it can build real stores.
+func newE2EEnvWith(t *testing.T, adjust func(*httpDeps, *sql.DB)) *e2eEnv {
 	t.Helper()
 	ctx := context.Background()
 	logger := zap.NewNop()
@@ -183,7 +192,7 @@ func newE2EEnv(t *testing.T) *e2eEnv {
 	env.ready = &atomic.Bool{}
 	env.ready.Store(true)
 
-	handler := buildHTTPHandler(httpDeps{
+	deps := httpDeps{
 		version:        "e2e",
 		startTime:      time.Now(),
 		dbConn:         sqlDB,
@@ -197,9 +206,11 @@ func newE2EEnv(t *testing.T) *e2eEnv {
 		rateLimitBurst: 1000,
 		allowedOrigins: []string{"*"},
 		ready:          env.ready,
-	}, logger)
-
-	env.server = httptest.NewServer(handler)
+	}
+	if adjust != nil {
+		adjust(&deps, sqlDB)
+	}
+	env.server = httptest.NewServer(buildHTTPHandler(deps, logger))
 	t.Cleanup(env.server.Close)
 	return env
 }
@@ -361,13 +372,17 @@ func TestE2E_QuarantineApproveReplay_Parity(t *testing.T) {
 	require.NotNil(t, replayRow, "replay must produce an approved_replayed ledger row")
 	require.Equal(t, "reviewer-jane", replayRow.Agent, "replay row is attributed to the approving human")
 
-	// KNOWN ABUSE, pinned until Phase 6: the worker currently writes the
-	// quarantine UUID into BOTH payload_hash and request_id (ledger semantic
-	// abuse documented in STABILIZATION-PLAN.md). Assert the CURRENT values
-	// so the divergence cannot silently change shape, and so Phase 6 has a
-	// failing pin to flip when real hashing lands.
-	require.Equal(t, created.QuarantineID, replayRow.PayloadHash, "PIN(phase-6): worker writes quarantine UUID as payload_hash")
-	require.Equal(t, created.QuarantineID, replayRow.RequestID, "PIN(phase-6): worker writes quarantine UUID as request_id")
+	// HITL rows carry the real payload hash, joining them to the proxy's
+	// original quarantine decision; request_id holds the quarantine UUID.
+	var quarantineRow *db.LedgerEntry
+	for i := range entries {
+		if entries[i].Decision == "quarantine" {
+			quarantineRow = &entries[i]
+		}
+	}
+	require.NotNil(t, quarantineRow, "the original quarantine decision must be ledgered")
+	require.Equal(t, quarantineRow.PayloadHash, replayRow.PayloadHash, "replay row must join the original decision by payload hash")
+	require.Equal(t, created.QuarantineID, replayRow.RequestID, "replay row carries the quarantine UUID as request_id")
 
 	require.True(t, env.ledgerValid(t), "ledger chain must verify after replay")
 }
@@ -446,7 +461,7 @@ func TestE2E_LedgerOutage_FailsClosed(t *testing.T) {
 
 type noopQuarantineStore struct{}
 
-func (noopQuarantineStore) Create(context.Context, string, string, []byte, http.Header) (string, error) {
+func (noopQuarantineStore) Create(context.Context, string, string, []byte, http.Header, string, string) (string, error) {
 	return "", errors.New("unreachable: quarantine store is not exercised before ledger append")
 }
 

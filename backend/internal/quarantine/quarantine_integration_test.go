@@ -32,7 +32,7 @@ func TestIntegration_CreateAndRetrieve(t *testing.T) {
 	require.NoError(t, err)
 	resetQuarantineTable(t, sqlDB)
 
-	id, err := store.Create(context.Background(), "agent_1", "tool_x", []byte(`{"data": "test"}`), nil)
+	id, err := store.Create(context.Background(), "agent_1", "tool_x", []byte(`{"data": "test"}`), nil, "test_rule", "held for test")
 	require.NoError(t, err)
 	assert.NotEmpty(t, id)
 
@@ -52,9 +52,9 @@ func TestIntegration_ListByStatus(t *testing.T) {
 	require.NoError(t, err)
 	resetQuarantineTable(t, sqlDB)
 
-	_, err = store.Create(context.Background(), "agent_2", "tool_y", []byte(`{"data": "test2"}`), nil)
+	_, err = store.Create(context.Background(), "agent_2", "tool_y", []byte(`{"data": "test2"}`), nil, "test_rule", "held for test")
 	require.NoError(t, err)
-	_, err = store.Create(context.Background(), "agent_3", "tool_z", []byte(`{"data": "test3"}`), nil)
+	_, err = store.Create(context.Background(), "agent_3", "tool_z", []byte(`{"data": "test3"}`), nil, "test_rule", "held for test")
 	require.NoError(t, err)
 
 	entries, err := store.List(context.Background(), "pending")
@@ -72,7 +72,7 @@ func TestIntegration_ApproveAndDeny(t *testing.T) {
 	require.NoError(t, err)
 	resetQuarantineTable(t, sqlDB)
 
-	id, err := store.Create(context.Background(), "agent_1", "tool_x", []byte(`{"data": "test"}`), nil)
+	id, err := store.Create(context.Background(), "agent_1", "tool_x", []byte(`{"data": "test"}`), nil, "test_rule", "held for test")
 	require.NoError(t, err)
 
 	err = store.Approve(context.Background(), id, "admin")
@@ -84,7 +84,7 @@ func TestIntegration_ApproveAndDeny(t *testing.T) {
 	assert.Equal(t, "admin", entry.ResolvedBy)
 	assert.True(t, entry.ResolvedAt.Valid)
 
-	id2, err := store.Create(context.Background(), "agent_2", "tool_y", []byte(`{"data": "test2"}`), nil)
+	id2, err := store.Create(context.Background(), "agent_2", "tool_y", []byte(`{"data": "test2"}`), nil, "test_rule", "held for test")
 	require.NoError(t, err)
 
 	err = store.Deny(context.Background(), id2, "admin", "violation")
@@ -128,7 +128,7 @@ func TestIntegration_ReplayExhaustionSurfacesReplayFailed(t *testing.T) {
 	defer target.Close()
 
 	ctx := context.Background()
-	id, err := store.Create(ctx, "agent_1", "tool_x", []byte(`{"data":"poison"}`), nil)
+	id, err := store.Create(ctx, "agent_1", "tool_x", []byte(`{"data":"poison"}`), nil, "test_rule", "held for test")
 	require.NoError(t, err)
 	require.NoError(t, store.Approve(ctx, id, "reviewer-jane"))
 
