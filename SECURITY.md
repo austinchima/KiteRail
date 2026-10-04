@@ -5,8 +5,7 @@
 | Version | Supported |
 |---------|-----------|
 | `main` (2.0.0, unreleased) | Yes |
-| 1.2.x   | Yes       |
-| 1.1.x   | Security fixes only |
+| 1.1.x   | Yes       |
 | < 1.1   | No        |
 
 ## Reporting a vulnerability

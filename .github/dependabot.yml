@@ -1,13 +1,22 @@
 version: 2
+# Every update lands on dev first and is promoted dev -> staging -> main.
 updates:
   - package-ecosystem: gomod
     directory: /backend
+    target-branch: dev
     schedule: { interval: weekly }
     groups:
       go-deps: { patterns: ["*"] }
   - package-ecosystem: docker
     directory: /
+    target-branch: dev
     schedule: { interval: weekly }
+    ignore:
+      # Move the Go minor version deliberately, together with go.mod, CI, and
+      # golangci-lint; Dependabot still proposes patch and digest updates.
+      - dependency-name: golang
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
   - package-ecosystem: github-actions
     directory: /
+    target-branch: dev
     schedule: { interval: weekly }

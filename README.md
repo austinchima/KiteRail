@@ -7,7 +7,7 @@
 ![Go](https://img.shields.io/badge/Go-1.26%2B-00ADD8?logo=go) ![License](https://img.shields.io/badge/License-Apache_2.0-blue) ![OPA](https://img.shields.io/badge/Policy-OPA_Rego-7d9fc3)
 
 ## Status
-**v1.2.0** is the latest release: signed images, Helm chart, hot-reloadable policy, externally anchorable audit ledger. **`main` adds** single sign-on for reviewers, Slack and webhook notifications for held actions, approve/deny from Slack, and the rename from KiteRail to Elodea; these ship as **2.0.0** because the rename changes header, metric and policy-package names (see [CHANGELOG.md](CHANGELOG.md)). Looking for design partners running agentic workflows in fintech or DevOps.
+**v1.1.0** is the latest tagged release. **`main` is the upcoming 2.0.0:** the production-readiness work (signed images, Helm chart, hot-reloadable policy, externally anchorable audit ledger), single sign-on for reviewers, Slack and webhook notifications for held actions, approve/deny from Slack, and the rename from KiteRail to Elodea. It is a major version because the rename changes header, metric and policy-package names (see [CHANGELOG.md](CHANGELOG.md)). Looking for design partners running agentic workflows in fintech or DevOps.
 
 ## The Problem
 

@@ -2,8 +2,8 @@ apiVersion: v2
 name: elodea
 description: Inline policy enforcement proxy for autonomous AI agents (OPA policy, HITL quarantine, tamper-evident audit ledger)
 type: application
-version: 1.2.0
-appVersion: "1.2.0"
+version: 2.0.0-dev
+appVersion: "2.0.0-dev"
 home: https://github.com/austinchima/KiteRail
 sources:
   - https://github.com/austinchima/KiteRail
