@@ -1,0 +1,36 @@
+# Benchmark overlay for the root docker-compose.yml. From the repo root:
+#
+#   docker compose -f docker-compose.yml -f bench/docker-compose.bench.yml up -d --build
+#
+# Changes from the dev stack:
+#   - the proxy forwards to mock-upstream, which answers instantly, so the
+#     numbers measure Elodea and not the echo server;
+#   - the per-agent rate limit (10 req/s by default) is raised so k6 measures
+#     capacity instead of the limiter;
+#   - log level is warn, because the per-decision info log is console I/O
+#     that a production deployment would ship elsewhere.
+services:
+  proxy:
+    command: ["-config", "/etc/elodea/bench.yaml"]
+    environment:
+      ELODEA_TARGET_URL: "http://mock-upstream:8082"
+      ELODEA_LOG_LEVEL: "warn"
+    configs:
+      - source: elodea-bench
+        target: /etc/elodea/bench.yaml
+    depends_on:
+      mock-upstream:
+        condition: service_started
+
+  mock-upstream:
+    build:
+      context: ./bench/mock-upstream
+    ports:
+      - "8082:8082"
+    restart: unless-stopped
+
+configs:
+  elodea-bench:
+    content: |
+      rate_limit_rps: 1000000
+      rate_limit_burst: 1000000

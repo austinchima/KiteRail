@@ -26,7 +26,7 @@ const lockKey int64 = 4242420427
 // DSN returns the integration-test DSN, skipping the test when unset.
 // QUARANTINE_TEST_DSN is accepted for backward compatibility with the
 // pre-extraction quarantine tests.
-func DSN(t *testing.T) string {
+func DSN(t testing.TB) string {
 	t.Helper()
 	if dsn := os.Getenv("ELODEA_POSTGRES_DSN"); dsn != "" {
 		return dsn
@@ -41,7 +41,7 @@ func DSN(t *testing.T) string {
 // Open connects to the integration database, takes the shared advisory
 // lock, applies migrations, and registers cleanup (lock release + close).
 // Tests should call Reset for table isolation.
-func Open(t *testing.T) *sql.DB {
+func Open(t testing.TB) *sql.DB {
 	t.Helper()
 	dsn := DSN(t)
 	ctx := context.Background()
@@ -67,7 +67,7 @@ func Open(t *testing.T) *sql.DB {
 
 // Reset truncates the given tables. Table names must be test-controlled
 // constants, never derived from request data.
-func Reset(t *testing.T, sqlDB *sql.DB, tables ...string) {
+func Reset(t testing.TB, sqlDB *sql.DB, tables ...string) {
 	t.Helper()
 	ctx := context.Background()
 	for _, table := range tables {
