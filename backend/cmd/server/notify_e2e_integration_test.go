@@ -13,8 +13,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 
-	"github.com/austinchima/kiterail/internal/db"
-	"github.com/austinchima/kiterail/internal/notify"
+	"github.com/austinchima/elodea/internal/db"
+	"github.com/austinchima/elodea/internal/notify"
 )
 
 // TestE2E_HeldActionNotifiesReviewersWithASignedWebhook: an agent call held

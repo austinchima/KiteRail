@@ -394,4 +394,4 @@ The project was called KiteRail until 2026. Some identifiers keep the old name o
 
 ---
 
-*Questions or feedback on this design? Open a [GitHub Discussion](https://github.com/austinchima/KiteRail/discussions) — architectural critique is especially welcome.*
+*Questions or feedback on this design? Open a [GitHub Discussion](https://github.com/austinchima/elodea/discussions) — architectural critique is especially welcome.*

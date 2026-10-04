@@ -37,8 +37,8 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/austinchima/kiterail/internal/notify"
-	"github.com/austinchima/kiterail/internal/quarantine"
+	"github.com/austinchima/elodea/internal/notify"
+	"github.com/austinchima/elodea/internal/quarantine"
 )
 
 const (

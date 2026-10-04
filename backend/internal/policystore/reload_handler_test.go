@@ -11,8 +11,8 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/austinchima/kiterail/internal/auth"
-	"github.com/austinchima/kiterail/internal/opaengine"
+	"github.com/austinchima/elodea/internal/auth"
+	"github.com/austinchima/elodea/internal/opaengine"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

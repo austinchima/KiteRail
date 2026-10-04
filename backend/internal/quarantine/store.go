@@ -9,8 +9,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/austinchima/kiterail/internal/db"
-	"github.com/austinchima/kiterail/internal/mcp"
+	"github.com/austinchima/elodea/internal/db"
+	"github.com/austinchima/elodea/internal/mcp"
 	"github.com/google/uuid"
 )
 

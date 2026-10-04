@@ -117,7 +117,7 @@ Agent protocols are moving fast: MCP revisions, agent-to-agent protocols, vendor
 
 ```bash
 # Clone the repository
-git clone https://github.com/austinchima/KiteRail.git elodea
+git clone https://github.com/austinchima/elodea.git
 cd elodea
 
 # Start all services (proxy + Postgres)
@@ -161,7 +161,7 @@ See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for secrets, policy delivery, ledge
 
 The reviewer dashboard (HITL inbox and audit ledger) is part of Elodea Cloud and is developed separately. It doesn't ship in this repository. Everything it does goes through the documented reviewer API ([docs/API.md](docs/API.md)), so you can build your own console, or drive reviews from Slack or a ticketing system, with the same guarantees.
 
-Interested in piloting Elodea on real agent workflows? I am looking for design partners in fintech or agent-DevOps. Open a [GitHub Discussion](https://github.com/austinchima/KiteRail/discussions).
+Interested in piloting Elodea on real agent workflows? I am looking for design partners in fintech or agent-DevOps. Open a [GitHub Discussion](https://github.com/austinchima/elodea/discussions).
 
 ## Writing Policies
 

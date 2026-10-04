@@ -12,9 +12,9 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/austinchima/kiterail/internal/auth"
-	"github.com/austinchima/kiterail/internal/db"
-	"github.com/austinchima/kiterail/internal/ledger"
+	"github.com/austinchima/elodea/internal/auth"
+	"github.com/austinchima/elodea/internal/db"
+	"github.com/austinchima/elodea/internal/ledger"
 )
 
 // maxDenyBodyBytes caps the deny-request body: the payload carries only a

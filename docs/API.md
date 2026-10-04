@@ -672,4 +672,4 @@ The API is versioned under `/api/v1/`. Breaking changes bump the version segment
 
 ## Feedback
 
-Missing an endpoint or a field you need? Open a [GitHub Discussion](https://github.com/austinchima/KiteRail/discussions) — API surface is exactly the kind of thing worth shaping around real usage.
+Missing an endpoint or a field you need? Open a [GitHub Discussion](https://github.com/austinchima/elodea/discussions) — API surface is exactly the kind of thing worth shaping around real usage.

@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/austinchima/kiterail/internal/auth"
+	"github.com/austinchima/elodea/internal/auth"
 )
 
 const testSessionCookie = "elodea_session"

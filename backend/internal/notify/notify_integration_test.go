@@ -11,8 +11,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 
-	"github.com/austinchima/kiterail/internal/db"
-	"github.com/austinchima/kiterail/internal/dbtest"
+	"github.com/austinchima/elodea/internal/db"
+	"github.com/austinchima/elodea/internal/dbtest"
 )
 
 // TestOutbox_Postgres runs the worker against the real outbox SQL: each held

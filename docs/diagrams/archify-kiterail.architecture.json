@@ -6,7 +6,7 @@
     "output": "docs/diagrams/architecture-interactive.html",
     "quality_profile": "showcase",
     "repository": {
-      "url": "https://github.com/austinchima/KiteRail.git",
+      "url": "https://github.com/austinchima/elodea.git",
       "revision": "b4bd0a2188e99286397ccf6ac5d73b9391490ae5"
     }
   },
