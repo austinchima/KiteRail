@@ -32,6 +32,11 @@ days and a fix or mitigation plan within 30 days for confirmed issues.
   arguments. Webhooks are signed (HMAC-SHA256 over timestamp and body;
   required in production), redirects are never followed, and Slack text is
   escaped so agent-supplied names cannot inject mentions or links.
+- **Slack approvals.** Clicks are accepted only with a valid Slack request
+  signature (five-minute window) from the configured workspace, and only
+  from users whose Slack email is on the reviewer list; bots and
+  deactivated accounts are refused. Message updates go only to Slack's own
+  domains.
 - **Upstream boundary.** The upstream URL is fixed by configuration (agents
   cannot choose path or query). Agent credentials, cookies, and
   `X-Elodea-*` / `Idempotency-Key` headers are stripped; the proxy asserts

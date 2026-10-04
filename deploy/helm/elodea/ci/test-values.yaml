@@ -6,6 +6,7 @@ secret:
   hasAdminKeys: true
   hasSlackWebhookURL: true
   hasWebhookSecret: true
+  hasSlackApp: true
 policies:
   configMap: elodea-policies
 networkPolicy:
@@ -27,3 +28,7 @@ oidc:
 consoleURL: https://elodea-console.example.com
 notify:
   webhookURL: https://hooks.example.com/elodea
+slack:
+  channelID: C0123456789
+  teamID: T0123456789
+  reviewers: [priya@example.com, sam@example.com]

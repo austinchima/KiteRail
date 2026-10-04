@@ -7,7 +7,7 @@
 ![Go](https://img.shields.io/badge/Go-1.26%2B-00ADD8?logo=go) ![License](https://img.shields.io/badge/License-Apache_2.0-blue) ![OPA](https://img.shields.io/badge/Policy-OPA_Rego-7d9fc3)
 
 ## Status
-**v1.2.0** is the latest release: signed images, Helm chart, hot-reloadable policy, externally anchorable audit ledger. **`main` adds** single sign-on for reviewers, Slack and webhook notifications for held actions, and the rename from KiteRail to Elodea; these ship as **2.0.0** because the rename changes header, metric and policy-package names (see [CHANGELOG.md](CHANGELOG.md)). Looking for design partners running agentic workflows in fintech or DevOps.
+**v1.2.0** is the latest release: signed images, Helm chart, hot-reloadable policy, externally anchorable audit ledger. **`main` adds** single sign-on for reviewers, Slack and webhook notifications for held actions, approve/deny from Slack, and the rename from KiteRail to Elodea; these ship as **2.0.0** because the rename changes header, metric and policy-package names (see [CHANGELOG.md](CHANGELOG.md)). Looking for design partners running agentic workflows in fintech or DevOps.
 
 ## The Problem
 
@@ -98,7 +98,7 @@ flowchart TB
 - **Inline enforcement, zero agent changes:** point an MCP client at Elodea instead of the tool server. Every call is validated, decided by policy, ledgered, and only then executed. Anything ambiguous fails closed.
 - **Agents learn from "no":** MCP clients get denials and quarantines as readable tool results (`isError`), so the model adapts instead of crashing on an HTTP error.
 - **Human-in-the-loop that holds up:** high-risk calls wait in a durable queue. Approvals are ledgered, replays are idempotent, and every replay is **re-checked against current policy** before it executes.
-- **Reviewers find out immediately:** held actions are announced in Slack or to a signed webhook (PagerDuty, Opsgenie, your own service) with a link straight to the approval queue. Tool arguments never leave Elodea in a notification.
+- **Reviewers find out immediately, and can decide on the spot:** held actions are announced in Slack or to a signed webhook (PagerDuty, Opsgenie, your own service) with a link straight to the approval queue. With the Slack app, listed reviewers approve or deny right from the message, recorded under their email. Tool arguments never leave Elodea in a notification.
 - **Approvals tied to real people:** reviewers sign in with your identity provider (Okta, Entra ID, Auth0, Keycloak, any OIDC provider). Roles come from IdP groups, and every approval is recorded under the verified identity.
 - **Audit an auditor will accept:** a SHA-256 hash chain that is append-only in the database. Each entry names the exact policy version that decided it, and the chain head can be anchored externally to prove nothing was truncated. Paginated queries and streaming NDJSON export (for SIEMs) are built in.
 - **Policy as code, live:** OPA/Rego bundles with a dry-run simulator, hot reload (SIGHUP, admin API, or GitOps polling), and automatic rejection of bundles that don't compile.
@@ -216,7 +216,8 @@ Elodea is configured via environment variables or a `elodea.yaml` file.
 | `ELODEA_NOTIFY_SLACK_WEBHOOK_URL` | Slack incoming webhook for held-action notifications | (off) |
 | `ELODEA_NOTIFY_WEBHOOK_URL` / `_SECRET` | Generic webhook for held actions, signed with HMAC-SHA256 (secret required in production) | (off) |
 | `ELODEA_CONSOLE_URL` | Where reviewers open the console; notifications link to its approvals queue | (none) |
-| `ELODEA_*_FILE` | File-based variants of `POSTGRES_DSN`, `TARGET_AUTH_TOKEN`, `API_KEYS`, `REVIEWER_API_KEYS`, `ADMIN_API_KEYS`, `OIDC_CLIENT_SECRET`, `NOTIFY_SLACK_WEBHOOK_URL`, `NOTIFY_WEBHOOK_SECRET` (key files: one `token:id` per line) | — |
+| `ELODEA_SLACK_BOT_TOKEN`, `_SIGNING_SECRET`, `_CHANNEL_ID`, `_TEAM_ID`, `_REVIEWERS` | Approve or deny held actions from Slack. Create the app from [deploy/slack/manifest.yaml](deploy/slack/manifest.yaml); see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md#approve-and-deny-from-slack) | (off) |
+| `ELODEA_*_FILE` | File-based variants of `POSTGRES_DSN`, `TARGET_AUTH_TOKEN`, `API_KEYS`, `REVIEWER_API_KEYS`, `ADMIN_API_KEYS`, `OIDC_CLIENT_SECRET`, `NOTIFY_SLACK_WEBHOOK_URL`, `NOTIFY_WEBHOOK_SECRET`, `SLACK_BOT_TOKEN`, `SLACK_SIGNING_SECRET` (key files: one `token:id` per line) | — |
 
 > **Trust domains are separate.** Agent tokens can only call the proxy. Approving quarantined actions, reading the ledger, and the dashboard require a reviewer/admin token or an SSO session; agents can never authenticate with a session cookie. Sharing a token across domains, or giving one identity both an agent and a reviewer role, is rejected at startup.
 
@@ -234,7 +235,7 @@ Next, in priority order:
 
 - **More adapters** on the new adapter boundary: agent-to-agent (A2A) task traffic and function-calling gateways.
 - **Agent identity federation:** OAuth 2.1 / RFC 9728 protected-resource metadata for agents, so Elodea evaluates both the agent and the human it acts for. (Reviewer single sign-on with OIDC has shipped.)
-- **Approve from the notification:** one-click approve and deny from Slack, building on the held-action notifications that have shipped.
+- **Payment controls as policy features:** amount, velocity, and aggregate limits; maker-checker; dual approval above a threshold; beneficiary allowlists.
 - **Shadow mode** for policy rollouts: record what a new bundle *would* decide without enforcing it.
 - **Pre-built policy packs** for common governance regimes (payments, cloud operations, data egress).
 - **Managed ledger anchoring** to a transparency log on a schedule.

@@ -1,0 +1,26 @@
+# Slack app manifest for approving held actions from Slack.
+# Create the app at https://api.slack.com/apps -> Create New App -> From a
+# manifest, paste this file, and replace the request_url host with the public
+# address of your Elodea API. Then install the app to your workspace and copy
+# the Bot User OAuth Token and the Signing Secret into Elodea's secret.
+display_information:
+  name: Elodea
+  description: Approve or deny AI agent actions held by Elodea policy.
+  background_color: "#16181d"
+features:
+  bot_user:
+    display_name: Elodea
+    always_online: false
+oauth_config:
+  scopes:
+    bot:
+      - chat:write        # post held actions to the reviewer channel
+      - users:read        # resolve who clicked
+      - users:read.email  # map them to an Elodea reviewer by email
+settings:
+  interactivity:
+    is_enabled: true
+    request_url: https://elodea.example.com/integrations/slack/interactions
+  org_deploy_enabled: false
+  socket_mode_enabled: false
+  token_rotation_enabled: false
