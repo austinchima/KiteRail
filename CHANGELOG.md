@@ -281,6 +281,7 @@ ledger, or review.
 
 [Unreleased]: https://github.com/austinchima/KiteRail/compare/v1.1.0...HEAD
 [1.1.0]: https://github.com/austinchima/KiteRail/compare/v1.0.0...v1.1.0
+[1.1.0-beta.1]: https://github.com/austinchima/KiteRail/compare/v1.1.0-alpha...v1.1.0-beta.1
 [1.1.0-alpha]: https://github.com/austinchima/KiteRail/compare/v1.0.0...v1.1.0-alpha
 [1.0.0]: https://github.com/austinchima/KiteRail/compare/v0.2.0...v1.0.0
 [0.2.0]: https://github.com/austinchima/KiteRail/compare/v0.1.0...v0.2.0
