@@ -86,6 +86,10 @@ type Config struct {
 	// Notify sends held-action notifications to Slack and/or a webhook.
 	Notify NotifyConfig `yaml:"notify"`
 
+	// Slack configures the Slack app that lets reviewers approve or deny
+	// held actions from Slack.
+	Slack SlackConfig `yaml:"slack"`
+
 	// LegacyEnv lists the pre-rename KITERAIL_* variables that were applied,
 	// so startup can warn about them. Never read from YAML.
 	LegacyEnv []string `yaml:"-"`
@@ -125,6 +129,29 @@ type NotifyConfig struct {
 	SlackWebhookURL string `yaml:"-"` // ELODEA_NOTIFY_SLACK_WEBHOOK_URL(_FILE)
 	WebhookURL      string `yaml:"webhook_url"`
 	WebhookSecret   string `yaml:"-"` // ELODEA_NOTIFY_WEBHOOK_SECRET(_FILE)
+}
+
+// SlackConfig configures approve/deny from Slack. The bot token and signing
+// secret are credentials, so they come from the environment or files only.
+type SlackConfig struct {
+	BotToken      string `yaml:"-"` // ELODEA_SLACK_BOT_TOKEN(_FILE)
+	SigningSecret string `yaml:"-"` // ELODEA_SLACK_SIGNING_SECRET(_FILE)
+	ChannelID     string `yaml:"channel_id"`
+	// TeamID rejects interactions from any other Slack workspace. Required
+	// in production.
+	TeamID string `yaml:"team_id"`
+	// Reviewers lists the emails allowed to decide from Slack. A Slack
+	// account alone grants nothing.
+	Reviewers []string `yaml:"reviewers"`
+	// APIBase is https://slack-gov.com/api for GovSlack; empty means Slack.
+	APIBase string `yaml:"api_base"`
+}
+
+// Enabled reports whether the Slack app is configured.
+func (s SlackConfig) Enabled() bool { return s.BotToken != "" }
+
+func (s SlackConfig) anySet() bool {
+	return s.BotToken != "" || s.SigningSecret != "" || s.ChannelID != "" || s.TeamID != "" || len(s.Reviewers) > 0
 }
 
 // Enabled reports whether SSO is configured.
@@ -273,6 +300,37 @@ func (c *Config) validateNotify() error {
 	return nil
 }
 
+// validateSlack checks the Slack app settings. A partial setup is an error,
+// so a typo cannot leave reviewers clicking buttons that do nothing.
+func (c *Config) validateSlack() error {
+	s := c.Slack
+	if !s.anySet() {
+		return nil
+	}
+	if s.BotToken == "" || s.SigningSecret == "" || s.ChannelID == "" {
+		return fmt.Errorf("slack: bot token, signing secret, and channel_id are all required")
+	}
+	if len(s.Reviewers) == 0 {
+		return fmt.Errorf("slack: set reviewers (the emails allowed to approve or deny from Slack)")
+	}
+	agentIDs := make(map[string]bool, len(c.APIKeys))
+	for _, id := range c.APIKeys {
+		agentIDs[strings.ToLower(id)] = true
+	}
+	for _, r := range s.Reviewers {
+		if !strings.Contains(r, "@") {
+			return fmt.Errorf("slack: reviewer %q is not an email address", r)
+		}
+		if agentIDs[strings.ToLower(r)] {
+			return fmt.Errorf("slack: %q is configured as both an agent and a reviewer; separation of duties requires distinct identities", r)
+		}
+	}
+	if c.Environment == "production" && s.TeamID == "" {
+		return fmt.Errorf("slack: team_id is required in production, so only your workspace can approve actions")
+	}
+	return nil
+}
+
 // minProductionTokenBytes is the shortest bearer token accepted in production.
 const minProductionTokenBytes = 24
 
@@ -330,6 +388,12 @@ func Load(path string) (*Config, error) {
 	setStringEnv(cfg, "ELODEA_NOTIFY_SLACK_WEBHOOK_URL", &cfg.Notify.SlackWebhookURL)
 	setStringEnv(cfg, "ELODEA_NOTIFY_WEBHOOK_URL", &cfg.Notify.WebhookURL)
 	setStringEnv(cfg, "ELODEA_NOTIFY_WEBHOOK_SECRET", &cfg.Notify.WebhookSecret)
+	setStringEnv(cfg, "ELODEA_SLACK_BOT_TOKEN", &cfg.Slack.BotToken)
+	setStringEnv(cfg, "ELODEA_SLACK_SIGNING_SECRET", &cfg.Slack.SigningSecret)
+	setStringEnv(cfg, "ELODEA_SLACK_CHANNEL_ID", &cfg.Slack.ChannelID)
+	setStringEnv(cfg, "ELODEA_SLACK_TEAM_ID", &cfg.Slack.TeamID)
+	setListEnv("ELODEA_SLACK_REVIEWERS", &cfg.Slack.Reviewers)
+	setStringEnv(cfg, "ELODEA_SLACK_API_BASE", &cfg.Slack.APIBase)
 
 	setStringEnv(cfg, "ELODEA_OIDC_ISSUER", &cfg.OIDC.Issuer)
 	setStringEnv(cfg, "ELODEA_OIDC_CLIENT_ID", &cfg.OIDC.ClientID)
@@ -363,6 +427,8 @@ func Load(path string) (*Config, error) {
 		"ELODEA_OIDC_CLIENT_SECRET_FILE":       &cfg.OIDC.ClientSecret,
 		"ELODEA_NOTIFY_SLACK_WEBHOOK_URL_FILE": &cfg.Notify.SlackWebhookURL,
 		"ELODEA_NOTIFY_WEBHOOK_SECRET_FILE":    &cfg.Notify.WebhookSecret,
+		"ELODEA_SLACK_BOT_TOKEN_FILE":          &cfg.Slack.BotToken,
+		"ELODEA_SLACK_SIGNING_SECRET_FILE":     &cfg.Slack.SigningSecret,
 	} {
 		if err := setFromFile(key, dst); err != nil {
 			return nil, err
@@ -466,6 +532,9 @@ func (c *Config) Validate() error {
 		return err
 	}
 	if err := c.validateNotify(); err != nil {
+		return err
+	}
+	if err := c.validateSlack(); err != nil {
 		return err
 	}
 

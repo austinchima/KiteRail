@@ -72,3 +72,12 @@ pg_conn_max_lifetime: 30m
 # console_url: https://elodea-console.example.com
 # notify:
 #   webhook_url: https://hooks.example.com/elodea
+
+# Approve or deny held actions from Slack (optional). The bot token and
+# signing secret come from ELODEA_SLACK_BOT_TOKEN and
+# ELODEA_SLACK_SIGNING_SECRET (or their _FILE variants), never YAML.
+# Create the Slack app from deploy/slack/manifest.yaml.
+# slack:
+#   channel_id: C0123456789
+#   team_id: T0123456789
+#   reviewers: [priya@example.com]
