@@ -85,7 +85,7 @@ jobs:
         run: go build -o /dev/null ./cmd/...
 
       - name: Upload coverage
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverage
           path: backend/coverage.out
