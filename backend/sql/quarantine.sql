@@ -1,12 +1,12 @@
 -- name: CreateQuarantineEntry :one
-INSERT INTO quarantine (agent_id, tool_name, payload, status, created_at, request_headers)
-VALUES ($1, $2, $3, 'pending', $4, $5) RETURNING id::text;
+INSERT INTO quarantine (agent_id, tool_name, payload, status, created_at, request_headers, policy_rule, explanation)
+VALUES ($1, $2, $3, 'pending', $4, $5, $6, $7) RETURNING id::text;
 
 -- name: GetQuarantineEntry :one
 SELECT * FROM quarantine WHERE id = $1::uuid;
 
 -- name: ListQuarantineByStatus :many
-SELECT * FROM quarantine WHERE status = $1;
+SELECT * FROM quarantine WHERE status = $1 ORDER BY created_at, id LIMIT 500;
 
 -- name: ApproveQuarantineEntry :execresult
 UPDATE quarantine SET status = $1, resolved_at = $2, resolved_by = $3, attempts = 0
@@ -50,4 +50,4 @@ UPDATE quarantine SET status = 'approved', attempts = attempts + 1
 WHERE id = $1::uuid AND status = 'replaying';
 
 -- name: RecoverStuckReplays :execrows
-UPDATE quarantine SET status = 'approved' WHERE status = 'replaying';
+UPDATE quarantine SET status = 'approved', attempts = attempts + 1 WHERE status = 'replaying';

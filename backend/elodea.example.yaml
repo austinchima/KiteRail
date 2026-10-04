@@ -1,4 +1,4 @@
-# KiteRail Configuration
+# Elodea Configuration
 
 listen_addr: ":8080"
 
@@ -9,7 +9,7 @@ target_url: "http://localhost:8081"
 policy_dir: "./policies"
 
 # PostgreSQL connection string
-postgres_dsn: "postgres://postgres:postgres@localhost:5432/kiterail?sslmode=disable"
+postgres_dsn: "postgres://postgres:postgres@localhost:5432/elodea?sslmode=disable"
 
 # development | production (production enforces strict startup validation:
 # no sk_dev_ credentials, TLS required, no local sslmode=disable DSN)
@@ -51,4 +51,24 @@ pg_conn_max_lifetime: 30m
 # tls_key_file: "/certs/tls.key"
 
 # Upstream service credential is loaded from the environment only:
-#   KITERAIL_TARGET_AUTH_TOKEN
+#   ELODEA_TARGET_AUTH_TOKEN
+
+# Single sign-on for reviewers and admins (optional). The client secret comes
+# from ELODEA_OIDC_CLIENT_SECRET or ELODEA_OIDC_CLIENT_SECRET_FILE, never YAML.
+# oidc:
+#   issuer: https://example.okta.com
+#   client_id: 0oa1b2c3d4
+#   redirect_url: https://elodea.example.com/auth/callback
+#   provider_name: Okta
+#   scopes: [openid, email, profile, groups]
+#   reviewer_groups: [treasury-reviewers]
+#   admin_groups: [elodea-admins]
+#   session_ttl: 8h
+#   session_idle_ttl: 1h
+
+# Held-action notifications (optional). Slack's webhook URL and the webhook
+# signing secret are credentials: set them with ELODEA_NOTIFY_SLACK_WEBHOOK_URL
+# and ELODEA_NOTIFY_WEBHOOK_SECRET (or their _FILE variants), never YAML.
+# console_url: https://elodea-console.example.com
+# notify:
+#   webhook_url: https://hooks.example.com/elodea

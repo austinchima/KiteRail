@@ -6,20 +6,32 @@ services:
     ports:
       - "8080:8080"
     environment:
-      KITERAIL_LISTEN_ADDR: ":8080"
-      KITERAIL_POSTGRES_DSN: "postgres://kiterail:kiterail@postgres:5432/kiterail?sslmode=disable"
-      KITERAIL_POLICY_DIR: "/app/policies"
-      KITERAIL_LOG_LEVEL: "info"
-      KITERAIL_API_KEYS: "sk_agent_local_000000000000:agent_1"
-      KITERAIL_REVIEWER_API_KEYS: "sk_reviewer_local_00000000:reviewer_1"
-      KITERAIL_TARGET_URL: "http://echo-target:8081"
+      ELODEA_LISTEN_ADDR: ":8080"
+      ELODEA_POSTGRES_DSN: "postgres://elodea:elodea@postgres:5432/elodea?sslmode=disable"
+      ELODEA_POLICY_DIR: "/app/policies"
+      ELODEA_LOG_LEVEL: "info"
+      ELODEA_API_KEYS: "sk_agent_local_000000000000:agent_1"
+      ELODEA_REVIEWER_API_KEYS: "sk_reviewer_local_00000000:reviewer_1"
+      ELODEA_TARGET_URL: "http://echo-target:8081"
+      ELODEA_POLICY_RELOAD_INTERVAL: "10s"
+    # Local development only: these credentials are deliberately fake.
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/elodea", "-healthcheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    # The image ships the policies/ bundle. To iterate on policies locally,
+    # uncomment the mount (requires Docker file sharing for this drive); the
+    # proxy hot-reloads changes within ELODEA_POLICY_RELOAD_INTERVAL.
+    # volumes:
+    #   - ./policies:/app/policies:ro
     depends_on:
       postgres:
         condition: service_healthy
     restart: unless-stopped
 
   echo-target:
-    image: mendhak/http-https-echo:latest
+    image: mendhak/http-https-echo:37
     environment:
       HTTP_PORT: 8081
     ports:
@@ -29,15 +41,15 @@ services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: kiterail
-      POSTGRES_PASSWORD: kiterail
-      POSTGRES_DB: kiterail
+      POSTGRES_USER: elodea
+      POSTGRES_PASSWORD: elodea
+      POSTGRES_DB: elodea
     ports:
-      - "5432:5432"
+      - "55432:5432"
     volumes:
       - pg_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U kiterail"]
+      test: ["CMD-SHELL", "pg_isready -U elodea"]
       interval: 5s
       timeout: 5s
       retries: 5

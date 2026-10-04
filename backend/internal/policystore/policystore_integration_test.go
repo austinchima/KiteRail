@@ -23,7 +23,7 @@ func TestIntegration_ListPolicies(t *testing.T) {
 # Trigger: refund_requested
 # Action: quarantine
 
-package kiterail.authz
+package elodea.authz
 
 default allow := false
 `), 0644))
@@ -49,7 +49,7 @@ default allow := false
 	assert.Equal(t, "Refund Review", enabled.Title)
 	assert.Equal(t, "refund_requested", enabled.TriggerRule)
 	assert.Equal(t, "quarantine", enabled.ActionType)
-	assert.Contains(t, enabled.Code, "package kiterail.authz")
+	assert.Contains(t, enabled.Code, "package elodea.authz")
 
 	disabled := byID["legacy_deny"]
 	assert.False(t, disabled.Enabled)

@@ -1,16 +1,16 @@
-# KiteRail Architecture
+# Elodea Architecture
 
-> This document explains *why* KiteRail is built the way it is, and where you can extend it without touching the core. If you only have five minutes, read the [Design Thesis](#design-thesis) and skim the three diagrams.
+> This document explains *why* Elodea is built the way it is, and where you can extend it without touching the core. If you only have five minutes, read the [Design Thesis](#design-thesis) and skim the three diagrams.
 
 ---
 
 ## Design Thesis
 
-KiteRail is built on a single opinion:
+Elodea is built on a single opinion:
 
 > **The LLM does one bounded step. Everything safety-critical is deterministic code.**
 
-Most "AI safety" tooling tries to make the model itself safer — prompt hardening, fine-tuning, output classifiers. KiteRail assumes the model is already compromised and asks a different question: *given that the LLM will eventually try something dangerous, what does the surrounding system need to look like so that "dangerous" is a decision you can inspect, diff, and reverse?*
+Most "AI safety" tooling tries to make the model itself safer — prompt hardening, fine-tuning, output classifiers. Elodea assumes the model is already compromised and asks a different question: *given that the LLM will eventually try something dangerous, what does the surrounding system need to look like so that "dangerous" is a decision you can inspect, diff, and reverse?*
 
 The answer:
 
@@ -28,7 +28,7 @@ Everything below the LLM row can be reasoned about with the same tools we use fo
 
 ## System Overview
 
-KiteRail sits inline between an autonomous agent and any downstream API. It groups its responsibilities into six planes.
+Elodea sits inline between an autonomous agent and any downstream API. It groups its responsibilities into six planes.
 
 ```mermaid
 flowchart TB
@@ -38,13 +38,13 @@ flowchart TB
 
     subgraph Ingress["🔐 Ingress Middleware"]
         direction LR
-        M1[CORS Middleware] --> M2[Bearer Auth<br/>role-based trust domains]
+        M1[CORS Middleware] --> M2[Auth<br/>bearer token · SSO session<br/>role-based trust domains]
     end
 
-    subgraph Control["⚙️ Control Plane · KiteRail Proxy"]
+    subgraph Control["⚙️ Control Plane · Elodea Proxy"]
         direction TB
         P[MCP Interceptor<br/>parses tools/call<br/>extracts name + arguments]
-        E[[OPA Policy Engine<br/>Rego evaluator<br/>reload-on-demand, RWMutex]]
+        E[[OPA Policy Engine<br/>Rego evaluator<br/>hot reload, versioned bundle]]
         SIM[/Policy Simulator<br/>dry-run endpoint/]
         PS[(Policy Store<br/>./policies/*.rego)]
         P --> E
@@ -54,14 +54,16 @@ flowchart TB
 
     subgraph Data["📒 Data Plane · Postgres"]
         direction LR
-        L[(Audit Ledger<br/>SHA-256 hash-chain<br/>SERIALIZABLE + FOR UPDATE<br/>retry x3)]
+        L[(Audit Ledger<br/>SHA-256 hash-chain<br/>append-only, advisory-locked<br/>externally anchorable)]
         Q[(Quarantine Store<br/>pending payloads)]
     end
 
     subgraph Human["👤 Human Plane"]
         direction TB
-        UI[React Dashboard<br/>HITL Inbox · Ledger Viewer]
+        N[Notifier<br/>Slack · signed webhook]
+        UI[Reviewer console<br/>HITL Inbox · Ledger Viewer · SSO]
         REV[Human Reviewer]
+        N --> REV
         UI <--> REV
     end
 
@@ -77,6 +79,7 @@ flowchart TB
     E -- QUARANTINE --> Q
 
     Q --> UI
+    Q -. outbox .-> N
     UI -- approve --> T
     UI -- deny --> DENIED
 
@@ -90,12 +93,12 @@ flowchart TB
 ### Why these six planes?
 
 - **Agent plane** is deliberately outside our trust boundary. We don't ship an SDK. Any agent that speaks JSON-RPC / MCP works today.
-- **Ingress middleware** is the only path in. Bearer auth is checked *before* policy evaluation so anonymous traffic never touches the OPA engine. The ingress speaks the 2026-07-28 MCP stateless profile: the body is one duplicate-free JSON-RPC 2.0 object and always the source of truth for policy; singleton `Mcp-Method` / `Mcp-Name` mirrored headers are validated against the method and the appropriate parameter (`name` or `uri`) when present, with Base64 MCP names decoded before comparison (contradiction → HTTP 400 + `-32020` *before* OPA), then mirrored — never rewritten — on the way out.
-- **`MCP-Protocol-Version` is accepted and forwarded, not enforced** (v1.0). The 2026-07-28 spec requires the header on every Streamable HTTP POST, but pinning a version is an ops commitment: API7 and LiteLLM both show the ecosystem cost of pinning before upstream servers settle. KiteRail records nothing version-dependent in the ledger today, so forwarding verbatim carries no integrity risk. Enforcement (version pinning + negotiation) is a deliberate v1.1 decision, revisited once the field's version distribution is measurable.
+- **Ingress middleware** is the only path in. Authentication is checked *before* policy evaluation so anonymous traffic never touches the OPA engine. Agents authenticate with bearer tokens only; reviewers and admins use a bearer token or an SSO session cookie. The ingress speaks the 2026-07-28 MCP stateless profile: the body is one duplicate-free JSON-RPC 2.0 object and always the source of truth for policy; singleton `Mcp-Method` / `Mcp-Name` mirrored headers are validated against the method and the appropriate parameter (`name` or `uri`) when present, with Base64 MCP names decoded before comparison (contradiction → HTTP 400 + `-32020` *before* OPA), then mirrored — never rewritten — on the way out.
+- **`MCP-Protocol-Version` is accepted and forwarded, not enforced.** The 2026-07-28 spec requires the header on every Streamable HTTP POST, but pinning a version is an ops commitment: API7 and LiteLLM both show the ecosystem cost of pinning before upstream servers settle. Elodea records nothing version-dependent in the ledger, so forwarding verbatim carries no integrity risk; its presence selects MCP-native outcomes. Version pinning and negotiation will be revisited once the field's version distribution is measurable.
 - **Control plane** is the deterministic core. It's stateless — restart it, no state is lost.
 - **Data plane** owns durability. Postgres is the single source of truth for both the audit ledger and the quarantine queue.
-- **Human plane** exists because the EU AI Act, SOX, and HIPAA all require it for high-risk decisions. The dashboard is a thin client over the same REST API a third-party UI could hit.
-- **Target plane** is untouched. KiteRail never modifies the downstream API, it just decides whether the request reaches it.
+- **Human plane** exists because the EU AI Act, SOX, and HIPAA all require it for high-risk decisions. Reviewers hear about held actions from the notifier, and the console is a thin client over the same REST API a third-party UI could hit.
+- **Target plane** is untouched. Elodea never modifies the downstream API, it just decides whether the request reaches it.
 
 ---
 
@@ -134,19 +137,23 @@ sequenceDiagram
         Q-->>P: quarantine_id
         P-->>A: 202 Accepted<br/>{ quarantine_id, status }
 
-        Note over U,Q: Async — human review
+        Note over U,Q: Async — reviewer is notified, then reviews
         U->>Q: GET /api/v1/quarantine
         U->>Q: POST /:id/approve or /:id/deny
         alt Approved
-            Q->>T: Replay request
             Q->>L: Append approval entry
+            Note over Q,T: Replay worker
+            Q->>O: Re-check current policy
+            Q->>L: Append replay_started (write-ahead)
+            Q->>T: Replay exact payload + Idempotency-Key
+            Q->>L: Append replay outcome
         else Denied
             Q->>L: Append denial entry
         end
     end
 ```
 
-Every arrow in this diagram maps to a function call in [`internal/proxy/proxy.go`](../backend/internal/proxy/proxy.go) (the inline proxy path) or [`internal/quarantine/handler.go`](../backend/internal/quarantine/handler.go) (the HITL approval and replay path). If you understand this diagram, you understand the hot path.
+Every arrow in this diagram maps to a function call in [`internal/proxy/proxy.go`](../backend/internal/proxy/proxy.go) (the inline proxy path), [`internal/quarantine/handler.go`](../backend/internal/quarantine/handler.go) (approval and denial), or [`internal/quarantine/worker.go`](../backend/internal/quarantine/worker.go) (the replay worker). If you understand this diagram, you understand the hot path.
 
 ### A note on ordering
 
@@ -164,39 +171,51 @@ flowchart LR
 
     subgraph internal["internal/"]
         CFG[config<br/>env + yaml loader]
-        PROXY[proxy<br/>handler · auth · sse]
-        OPA[opaengine<br/>Rego evaluator]
-        PS[policystore<br/>Rego CRUD]
-        Q[quarantine<br/>store · handler]
-        LED[ledger<br/>store · handler]
+        AUTH[auth<br/>trust domains · CSRF]
+        SSO[sso<br/>OIDC sign-in · sessions]
+        PROXY[proxy<br/>handler · MCP adapter]
+        OPA[opaengine<br/>Rego evaluator · hot reload]
+        PS[policystore<br/>read-only Rego bundle]
+        Q[quarantine<br/>store · handler · replay worker]
+        LED[ledger<br/>hash chain · verify · export]
+        NOT[notify<br/>outbox · Slack · webhook]
         DASH[dashboard<br/>stats aggregator]
+        DB[db<br/>sqlc queries · migrations]
     end
 
     subgraph external["External"]
         PG[(PostgreSQL)]
         REGO[Rego policy files]
+        IDP[Identity provider]
+        HOOK[Slack / webhooks]
     end
 
     MAIN --> CFG
     MAIN --> PROXY
-    MAIN --> OPA
-    MAIN --> PS
     MAIN --> Q
-    MAIN --> LED
+    MAIN --> SSO
+    MAIN --> NOT
     MAIN --> DASH
 
     PROXY -->|OPAEngine iface| OPA
     PROXY -->|QuarantineStore iface| Q
     PROXY -->|LedgerStore iface| LED
+    PROXY --> AUTH
+    SSO -->|SessionAuthenticator| AUTH
 
     Q --> LED
     DASH --> LED
     DASH --> Q
+    NOT --> DB
+    SSO --> DB
+    Q --> DB
+    LED --> DB
 
     OPA --> REGO
     PS --> REGO
-    Q --> PG
-    LED --> PG
+    DB --> PG
+    SSO --> IDP
+    NOT --> HOOK
 ```
 
 ### Design rules the layout enforces
@@ -216,15 +235,16 @@ The proxy is inline on the critical path of an agent making a real API call. It 
 
 Every ledger entry stores `hash = SHA256(prev_hash || entry_data)`. Two concurrent writers reading the same `prev_hash` would fork the chain silently. The fix:
 
-- Each `Append()` opens a `SERIALIZABLE` transaction and takes `SELECT ... FOR UPDATE` on the tip of the chain.
-- On serialization failure (Postgres error code `40001`), retry up to 8 times with cancellable exponential backoff and jitter (bounded to roughly two seconds).
+- Each `Append()` opens a transaction and takes a transaction-scoped advisory lock (`pg_advisory_xact_lock`) before reading the chain tip, so concurrent appends across every replica queue rather than abort. The lock is released at commit, after which the next waiter's READ COMMITTED snapshot sees the new tip.
+- A bounded, cancellable retry on SQLSTATE `40001` remains as a fallback.
+- Triggers make the table append-only (`UPDATE`/`DELETE`/`TRUNCATE` rejected unless an operator opts in per transaction), and each entry is bound to the policy bundle version that produced it.
 - If all retries fail, the error is surfaced — never silently discarded.
 
 This is documented in the [v1.0 CHANGELOG](../CHANGELOG.md#100---2026-08-01) because the previous version had a silent bug here. It's the kind of correctness issue only visible under real concurrent load; catching it in v0.2 → v1.0 was the last thing standing between "prototype" and "shippable."
 
-### 2. OPA engine reload-on-demand race
+### 2. OPA engine hot reload
 
-`Evaluate()` and `Reload()` both touch the compiled Rego module set. A `sync.RWMutex` guards them: readers (evaluators) don't block each other, but a reload (writer) waits for in-flight evaluations to finish before swapping the module set atomically.
+`Reload()` compiles the new bundle *outside* the lock, then swaps the prepared query, readiness, and bundle fingerprint atomically under a `sync.RWMutex`. Evaluations in flight finish on the old query; new ones see the new one. A bundle that fails to compile is rejected and the previous query keeps serving. Reloads come from `SIGHUP`, `POST /api/v1/policies/reload` (admin), or polling the bundle fingerprint (`policy_reload_interval`).
 
 ### 3. Graceful shutdown
 
@@ -250,11 +270,35 @@ Claims are atomic (`UPDATE ... FROM (SELECT ... FOR UPDATE SKIP LOCKED)`), and e
 
 Agents, reviewers, and admins hold distinct token sets (`api_keys`, `reviewer_api_keys`, `admin_api_keys`). Agents can only reach the proxy; approve/deny, ledger reads, and the dashboard require a reviewer or admin identity — which is also the only source of `resolved_by` on HITL decisions (body-supplied identities are ignored). Duplicate tokens across domains are rejected at startup.
 
+With single sign-on, reviewers and admins sign in through the organization's OIDC identity provider instead. The server runs the Authorization Code flow with PKCE, maps IdP groups to roles, and gives the browser only an opaque `HttpOnly` cookie; the database stores a SHA-256 of the session token, never the token. Cookie-authenticated changes require a custom header (`X-Requested-With: elodea`) and an allowed `Origin`, which a cross-site form cannot forge. Agent routes never accept cookies.
+
+### 7. Notifications that are neither lost nor duplicated
+
+Held actions are announced through a Postgres outbox (`notification_outbox`, one row per held action and channel). Each worker tick queues pending actions, claims due rows with `FOR UPDATE SKIP LOCKED` under a short lease, and sends them. A failed send backs off (15 s doubling to 1 h, 8 attempts); a crash mid-send is retried when the lease expires. Delivery is therefore at-least-once with a stable delivery ID, never concurrent across replicas, and an action reviewed before its turn is closed without a message.
+
 ---
+
+## Designed to Evolve
+
+Elodea governs *actions*, not a particular protocol. The design keeps everything that changes quickly at the edge and everything that must be trustworthy in a small, stable core:
+
+| Layer | Changes when… | Contract |
+|---|---|---|
+| Ingress adapter (`proxy.Adapter`) | a protocol or protocol revision appears | `Parse` → normalized `Invocation`; render deny/quarantine natively |
+| Policy input | almost never | `elodea.eval/v1`, additive-only; `protocol` / `protocol_version` let policies target revisions explicitly |
+| Policy bundle | your rules change | Rego, hot-reloaded, fingerprinted (`policy_version`) on every decision |
+| Ledger, quarantine, replay | never for protocol reasons | protocol-neutral; replay re-derives the decision through the same adapter + engine |
+
+Consequences:
+
+1. **A new agent protocol is an adapter**, not a fork. It must be strict: anything it cannot fully describe to policy is rejected, because an unparsed request must never be forwarded. One adapter serves one route, so there is no protocol sniffing an attacker could steer.
+2. **Policies outlive protocol versions.** Existing fields never change meaning; a rule written against `tool` and `arguments` keeps working when MCP adds a revision.
+3. **Approvals are bound to current policy.** A human approval doesn't immunize an action against later policy changes: replay re-evaluates the stored request with the bundle in force at execution time.
+4. **Evidence is portable.** NDJSON export plus an externally anchored head means the audit trail can be verified without trusting Elodea or its database.
 
 ## Extension Points
 
-The interface boundaries in the [package diagram](#package-layout) are the extension points. They exist so that scaling KiteRail into new verticals or new deployment shapes doesn't require rewriting the proxy.
+The interface boundaries in the [package diagram](#package-layout) are the extension points. They exist so that scaling Elodea into new verticals or new deployment shapes doesn't require rewriting the proxy.
 
 ### Add a new decision engine (e.g. Cedar, custom Go logic)
 
@@ -283,9 +327,22 @@ type QuarantineStore interface {
 
 The hash-chain invariant lives in the store implementation, not the proxy, so a new backend has to honour it — but it can use whatever concurrency primitives the target database offers.
 
-### Add a new event sink (e.g. NATS, Kafka, SIEM webhook)
+### Add a notification channel (e.g. Microsoft Teams, PagerDuty native)
 
-Implement `proxy.EventPublisher`. v1.0 ships with a `NoOpPublisher` (audit events go straight to the Postgres ledger). v1.1 will re-introduce a `NatsPublisher` for real-time streaming; a `KafkaPublisher` or a `WebhookPublisher` would be a drop-in swap. (The half-built NATS implementation that used to live in `internal/events` was deleted in Phase 4 hardening — it carried `nats-server/v2` as a direct dependency for zero production value. The interface is the v1.1 seam; the implementation returns with the real feature.)
+Implement `notify.Channel`:
+
+```go
+type Channel interface {
+    Name() string
+    Send(ctx context.Context, action HeldAction) error
+}
+```
+
+Add it to the channel list in `main.go`. The outbox gives it retries, backoff, and replica-safe delivery for free; `Send` only has to be safe to call twice for the same action.
+
+### Add a new event sink (e.g. Kafka, NATS)
+
+Implement `proxy.EventPublisher`. Elodea ships a `NoOpPublisher`: audit events go straight to the Postgres ledger, and SIEMs consume them with `GET /api/v1/ledger/export` (streaming NDJSON, resumable with `after_seq`). A `KafkaPublisher` or `NatsPublisher` is a drop-in swap when a deployment needs push-based streaming.
 
 ### Add a new vertical (DevOps, healthcare, HR)
 
@@ -293,112 +350,46 @@ No code changes. Write Rego. Example: quarantine any `kubectl` operation on a `p
 
 ---
 
-## What's Deliberately Excluded from v1.0
+## What's Deliberately Not Built Yet
 
 Being explicit about scope is how you stay shippable.
 
-| Feature | Why deferred | Target |
-|---|---|---|
-| NATS JetStream real-time streaming | Adds a runtime dependency for local dev. Postgres-only path is simpler for first-time evaluators. | v1.1 |
-| PII/PCI payload redaction | Non-trivial to get right per-vertical. Sketching a per-field Rego-driven redaction model. | v1.2 |
-| SSO / SAML / SCIM on the dashboard | Only relevant once a design partner has multiple reviewers. | Cloud tier |
-| OpenTelemetry traces | `zap` structured logs cover local debugging. OTel matters when someone runs this in a real cluster. | v1.1 |
-| Policy versioning + rollback | Ledger records the policy *rule* today, but not the *policy file hash*. Needed before compliance-officer sign-off. | v1.1 |
-| Multi-tenant proxy fleet | Single-tenant self-host is enough for the beachhead. Multi-tenant is a Cloud-tier problem. | Cloud tier |
+| Feature | Why not yet |
+|---|---|
+| Push-based event streaming (Kafka, NATS) | NDJSON export already feeds SIEMs; a broker adds a runtime dependency most evaluators don't need. |
+| PII/PCI payload redaction before the ledger write | Hard to get right per vertical. The planned model is per-field, Rego-driven redaction. |
+| SAML and SCIM provisioning | OIDC single sign-on covers every major IdP. SAML-only IdPs and automatic deprovisioning come next. |
+| OpenTelemetry traces | Structured logs and Prometheus metrics cover operations today. |
+| Multi-tenant proxy fleet | Single-tenant self-hosting fits regulated buyers, who want the proxy inside their own network. |
 
-If you're a potential design partner and one of these is a blocker for your pilot, open a GitHub Discussion — it'll move the roadmap.
+If you're a potential design partner and one of these blocks your pilot, open a GitHub Discussion. It will move the roadmap.
 
 ---
 
 ## Roadmap
 
-Roadmap is split by audience: engineers running the proxy, and engineers extending or adopting it. Both ship as part of v1.1.
+Shipped since 1.0: Prometheus metrics, policy bundle version on every ledger entry, the policy cookbook, the full REST reference, hot reload, the protocol adapter boundary, MCP-native outcomes, single sign-on, and held-action notifications. Next, in priority order:
 
-### v1.1 · Runtime (correctness, observability, streaming)
-
-1. **Structured request-ID / trace-ID** threaded through proxy → OPA → ledger,
-   surfaced in every log line for end-to-end forensics.
-2. **`/metrics` endpoint** (Prometheus) — evaluation latency histograms, decision
-   counts by action, ledger append duration, quarantine queue depth.
-3. **OpenTelemetry traces** — spans for the auth → parse → evaluate → route
-   pipeline. Turns "typical p95 <10 ms" from a claim into a live dashboard.
-4. **Benchmarks** (`bench/` directory) with reproducible `go test -bench`
-   numbers, published in the README to replace the local-only latency claim.
-5. **Policy file hash in every ledger entry** — closes the "which policy
-   version actually decided this?" gap that a compliance officer will ask about
-   on the first call.
-6. **NATS JetStream re-integration** — real-time event streaming to external
-   SIEMs (Splunk, Datadog, Elastic) via the existing `EventPublisher` interface.
-
-### v1.1 · Developer experience (open-core adoption)
-
-7. **`kiterail` CLI** (`cmd/kiterail/`) — thin wrapper over the REST API:
-   `kiterail quarantine list/approve/deny`, `kiterail ledger tail/verify`,
-   `kiterail policy test/simulate`. First-class terminal UX, no dashboard needed.
-8. **Policy cookbook** (`policies/examples/`) — 6 archetypal patterns
-   (allow-list, deny-list, threshold, time-window, agent-scope, jurisdiction,
-   regex-arg) with heavy inline comments. Lowers the Rego learning curve.
-9. **Embedded SQLite backend** — a `LedgerStore` / `QuarantineStore`
-   implementation for zero-infra local dev and single-node deployments.
-   `kiterail server --sqlite ./kiterail.db` and you're running.
-10. **Docker Compose ergonomics** — bundled `echo-target` service so ALLOW
-    requests work out of the box, and NATS removed until v1.1 introduces it
-    as an optional profile.
-11. **REST API reference** (`docs/API.md`) — curl examples for every endpoint,
-    published as a single page so a dev can integrate KiteRail into their
-    Makefile without opening the source.
-
-### v1.2 · Compliance & vertical depth
-
-12. **PII / PCI payload redaction** — per-field Rego-driven redaction before
-    the ledger write, with SSN, PAN, and IBAN patterns shipped by default.
-13. **Policy versioning + rollback** — every policy change is a signed commit
-    in the ledger, and any past decision can be replayed against any past
-    policy set for regulator-facing forensics.
-14. **Second beachhead vertical** — depending on design-partner traction,
-    ship a reference policy set for either agent-driven DevOps
-    (`kubectl`, `terraform`) or healthcare (HIPAA-scoped EHR access).
-
-### v1.2 · Product bets (positioning for design partners)
-
-These are the strategic capabilities that move KiteRail from "compliance
-plumbing" to "the layer regulated AI-agent deployments actually depend on."
-See the [README roadmap](../README.md#roadmap) for the design-partner-facing
-framing.
-
-15. **Protocol agnosticism** — the MCP-specific parser in
-    `internal/proxy/proxy.go` becomes one of several `TrafficDecoder`
-    implementations. Adds first-class REST (JSON body + path templates) and
-    gRPC (unary + streaming) decoders behind a shared `EvalInput` shape, so
-    the same Rego policies govern any protocol.
-
-16. **Compliance packs** — curated, versioned Rego bundles under
-    `policies/packs/{pci-dss,hipaa,sox,eu-ai-act}/` maintained alongside the
-    codebase. Distinct from the [Policy cookbook](#) (item #8) which teaches
-    Rego patterns; packs are ready-to-drop-in policy sets for specific
-    regulatory regimes.
-
-17. **Two-identity authorization** — extend `EvalInput` with a `Principal`
-    field carrying the human user on whose behalf the agent is acting
-    (OAuth token, SAML assertion, or signed principal claim). Policies can
-    then check both `input.agent` and `input.principal`, enabling
-    agent-level segregation of duties. Blocks the class of attack where a
-    compromised or over-scoped agent executes actions its invoking human
-    could not.
+1. **Approve from Slack.** Interactive approve and deny buttons in the notification, recorded under the reviewer's mapped identity.
+2. **Payment controls as first-class policy features.** Amount, velocity, and aggregate limits; maker-checker (the requester can never approve); dual approval above a threshold; beneficiary allowlists.
+3. **Two-identity authorization.** Extend the policy input with the human principal the agent acts for, so policies check both `input.agent` and `input.principal`.
+4. **Shadow mode** for policy rollouts: record what a new bundle *would* decide without enforcing it.
+5. **Policy packs** for common regimes (payments, cloud operations, data egress), mapped to the OWASP Top 10 for Agentic Applications.
+6. **More adapters** on the existing boundary: agent-to-agent (A2A) task traffic and function-calling gateways.
+7. **Developer experience:** an `elodea` CLI over the REST API, an embedded SQLite backend for single-node use, and published benchmarks.
+8. **Managed ledger anchoring** to a transparency log on a schedule.
 
 ### On sustainability
 
-KiteRail is and will remain Apache 2.0. If there's demand, we may eventually
-offer a hosted, managed version for teams that don't want to run the proxy
-themselves — same code, same policies, someone else's Postgres. That decision
-is downstream of whether real teams actually adopt this. For now, the entire
-focus is making the open-source project excellent.
+Elodea's core (the proxy, policy engine, approvals, and audit ledger) is and will remain Apache 2.0. If there's demand, we may offer a hosted or enterprise edition for teams that want it, built on the same code and policies. For now, the focus is making the open-source project excellent.
 
 ---
 
 ## A Note on the Name
 
-KiteRail is a *kite line* for autonomous agents — enough tension to keep them safe, enough slack to let them fly. The proxy is the rail; policies are the tether; the audit ledger is what the ground crew reads after the flight.
+Elodea is named after the waterweed that keeps an aquarium alive: it sits quietly in the tank, filters what passes through, and keeps the whole ecosystem healthy without the fish noticing. That's the job here. Agents keep working; Elodea decides what they may do, holds what needs a human, and keeps the record.
+
+The project was called KiteRail until 2026. Some identifiers keep the old name on purpose (see the [CHANGELOG](../CHANGELOG.md)).
 
 ---
 

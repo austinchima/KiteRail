@@ -1,4 +1,4 @@
--- Schema for KiteRail ledger and quarantine tables
+-- Schema for Elodea ledger and quarantine tables
 -- Source of truth for sqlc code generation (see sqlc.yaml).
 -- The RUNTIME schema is applied by the embedded migrations in
 -- internal/db/migrations (applied by internal/db/migrate.go) — this file is
@@ -15,11 +15,13 @@ CREATE TABLE IF NOT EXISTS ledger (
     payload_hash TEXT NOT NULL,
     prev_hash TEXT NOT NULL,
     hash TEXT NOT NULL,
-    request_id TEXT NOT NULL DEFAULT ''
+    request_id TEXT NOT NULL DEFAULT '',
+    policy_version TEXT NOT NULL DEFAULT ''
 );
 
 CREATE INDEX IF NOT EXISTS idx_ledger_timestamp ON ledger (timestamp);
 CREATE INDEX IF NOT EXISTS idx_ledger_agent ON ledger (agent);
+-- Runtime triggers (migration 005) reject UPDATE/DELETE/TRUNCATE on ledger.
 
 -- Quarantine table for human-in-the-loop approval queue
 CREATE TABLE IF NOT EXISTS quarantine (
@@ -34,9 +36,45 @@ CREATE TABLE IF NOT EXISTS quarantine (
     reason TEXT,
     attempts INT NOT NULL DEFAULT 0,
     replayed_at TIMESTAMPTZ,
-    request_headers JSONB NOT NULL DEFAULT '{}'
+    request_headers JSONB NOT NULL DEFAULT '{}',
+    policy_rule TEXT NOT NULL DEFAULT '',
+    explanation TEXT NOT NULL DEFAULT ''
 );
 
 CREATE INDEX IF NOT EXISTS idx_quarantine_status ON quarantine (status);
 CREATE INDEX IF NOT EXISTS idx_quarantine_agent ON quarantine (agent_id);
 CREATE INDEX IF NOT EXISTS idx_quarantine_created ON quarantine (created_at);
+
+-- SSO (migration 008): one OIDC round trip per login attempt, and
+-- server-side sessions keyed by the SHA-256 of the cookie token.
+CREATE TABLE IF NOT EXISTS auth_login_attempts (
+    state TEXT PRIMARY KEY,
+    nonce TEXT NOT NULL,
+    code_verifier TEXT NOT NULL,
+    return_to TEXT NOT NULL,
+    expires_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS sessions (
+    id_hash TEXT PRIMARY KEY,
+    subject TEXT NOT NULL,
+    email TEXT NOT NULL,
+    role TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at TIMESTAMPTZ NOT NULL,
+    last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    revoked_at TIMESTAMPTZ
+);
+
+-- Held-action notifications (migration 009): one outbox row per held
+-- action and channel.
+CREATE TABLE IF NOT EXISTS notification_outbox (
+    quarantine_id UUID NOT NULL REFERENCES quarantine(id) ON DELETE CASCADE,
+    channel TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    attempts INT NOT NULL DEFAULT 0,
+    next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    delivered_at TIMESTAMPTZ,
+    last_error TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (quarantine_id, channel)
+);

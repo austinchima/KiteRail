@@ -28,6 +28,44 @@ type QuarantineEntry struct {
 	Attempts       int
 	ReplayedAt     sql.NullTime
 	RequestHeaders json.RawMessage
+	PolicyRule     string
+	Explanation    string
+}
+
+// MarshalJSON keeps the documented v1 wire shape (PascalCase keys, base64
+// Payload) but renders unset timestamps as null instead of sql.NullTime's
+// {"Time": ..., "Valid": false} struct.
+func (e QuarantineEntry) MarshalJSON() ([]byte, error) {
+	nullableTime := func(t sql.NullTime) *time.Time {
+		if !t.Valid {
+			return nil
+		}
+		return &t.Time
+	}
+	headers := e.RequestHeaders
+	if len(headers) == 0 {
+		headers = json.RawMessage("{}")
+	}
+	return json.Marshal(struct {
+		ID             string
+		AgentID        string
+		ToolName       string
+		Payload        []byte
+		Status         string
+		CreatedAt      time.Time
+		ResolvedAt     *time.Time
+		ResolvedBy     string
+		Reason         string
+		Attempts       int
+		ReplayedAt     *time.Time
+		RequestHeaders json.RawMessage
+		PolicyRule     string
+		Explanation    string
+	}{
+		e.ID, e.AgentID, e.ToolName, e.Payload, e.Status, e.CreatedAt,
+		nullableTime(e.ResolvedAt), e.ResolvedBy, e.Reason, e.Attempts,
+		nullableTime(e.ReplayedAt), headers, e.PolicyRule, e.Explanation,
+	})
 }
 
 func ToQuarantineEntry(m Quarantine) QuarantineEntry {
@@ -44,6 +82,8 @@ func ToQuarantineEntry(m Quarantine) QuarantineEntry {
 		Attempts:       int(m.Attempts),
 		ReplayedAt:     m.ReplayedAt,
 		RequestHeaders: m.RequestHeaders,
+		PolicyRule:     m.PolicyRule,
+		Explanation:    m.Explanation,
 	}
 }
 

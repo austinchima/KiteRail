@@ -12,17 +12,36 @@ import (
 	"github.com/google/uuid"
 )
 
+type AuthLoginAttempt struct {
+	State        string    `json:"state"`
+	Nonce        string    `json:"nonce"`
+	CodeVerifier string    `json:"code_verifier"`
+	ReturnTo     string    `json:"return_to"`
+	ExpiresAt    time.Time `json:"expires_at"`
+}
+
 type Ledger struct {
-	SeqNum      int64     `json:"seq_num"`
-	Timestamp   time.Time `json:"timestamp"`
-	Agent       string    `json:"agent"`
-	Tool        string    `json:"tool"`
-	Decision    string    `json:"decision"`
-	PolicyRule  string    `json:"policy_rule"`
-	PayloadHash string    `json:"payload_hash"`
-	PrevHash    string    `json:"prev_hash"`
-	Hash        string    `json:"hash"`
-	RequestID   string    `json:"request_id"`
+	SeqNum        int64     `json:"seq_num"`
+	Timestamp     time.Time `json:"timestamp"`
+	Agent         string    `json:"agent"`
+	Tool          string    `json:"tool"`
+	Decision      string    `json:"decision"`
+	PolicyRule    string    `json:"policy_rule"`
+	PayloadHash   string    `json:"payload_hash"`
+	PrevHash      string    `json:"prev_hash"`
+	Hash          string    `json:"hash"`
+	RequestID     string    `json:"request_id"`
+	PolicyVersion string    `json:"policy_version"`
+}
+
+type NotificationOutbox struct {
+	QuarantineID  uuid.UUID    `json:"quarantine_id"`
+	Channel       string       `json:"channel"`
+	CreatedAt     time.Time    `json:"created_at"`
+	Attempts      int32        `json:"attempts"`
+	NextAttemptAt time.Time    `json:"next_attempt_at"`
+	DeliveredAt   sql.NullTime `json:"delivered_at"`
+	LastError     string       `json:"last_error"`
 }
 
 type Quarantine struct {
@@ -38,4 +57,17 @@ type Quarantine struct {
 	Attempts       int32           `json:"attempts"`
 	ReplayedAt     sql.NullTime    `json:"replayed_at"`
 	RequestHeaders json.RawMessage `json:"request_headers"`
+	PolicyRule     string          `json:"policy_rule"`
+	Explanation    string          `json:"explanation"`
+}
+
+type Session struct {
+	IDHash     string       `json:"id_hash"`
+	Subject    string       `json:"subject"`
+	Email      string       `json:"email"`
+	Role       string       `json:"role"`
+	CreatedAt  time.Time    `json:"created_at"`
+	ExpiresAt  time.Time    `json:"expires_at"`
+	LastSeenAt time.Time    `json:"last_seen_at"`
+	RevokedAt  sql.NullTime `json:"revoked_at"`
 }

@@ -2,7 +2,7 @@
   "schema_version": 1,
   "diagram_type": "architecture",
   "meta": {
-    "title": "KiteRail Verified Runtime Flow",
+    "title": "Elodea Verified Runtime Flow",
     "output": "docs/diagrams/architecture-interactive.html",
     "quality_profile": "showcase",
     "repository": {

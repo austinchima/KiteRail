@@ -1,9 +1,19 @@
+# Only backend/, policies/ and LICENSE are needed to build the image.
 web/
 node_modules/
 .git/
-*.exe
-*.md
-LICENSE
+.github/
+.agents/
+graphify-out/
+blog-posts/
 assets/
 docs/
-.agents/
+deploy/
+examples/
+tests/
+scripts/
+*.exe
+*.md
+*.html
+*.json
+!backend/**/*.json
