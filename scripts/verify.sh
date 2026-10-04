@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# KiteRail Phase 4 verification script (make-less, as the stabilization plan demands).
-# Usage:  KITERAIL_POSTGRES_DSN=postgres://... ./scripts/verify.sh
+# Elodea Phase 4 verification script (make-less, as the stabilization plan demands).
+# Usage:  ELODEA_POSTGRES_DSN=postgres://... ./scripts/verify.sh
 # If the system temp volume is short on space, point the Go linker elsewhere:
-#   GOTMPDIR=/path/with/space KITERAIL_POSTGRES_DSN=... ./scripts/verify.sh
+#   GOTMPDIR=/path/with/space ELODEA_POSTGRES_DSN=... ./scripts/verify.sh
 # Each gate must pass; the script exits non-zero on the first failure.
 set -euo pipefail
 
@@ -35,9 +35,9 @@ echo "=== [5/8] govulncheck ==="
 "$GOVULNCHECK" ./...
 echo "ok"
 
-echo "=== [6/8] go test -race (needs KITERAIL_POSTGRES_DSN for integration suites) ==="
-if [ -z "${KITERAIL_POSTGRES_DSN:-}" ]; then
-  echo "WARNING: KITERAIL_POSTGRES_DSN not set; integration suites will skip." >&2
+echo "=== [6/8] go test -race (needs ELODEA_POSTGRES_DSN for integration suites) ==="
+if [ -z "${ELODEA_POSTGRES_DSN:-}" ]; then
+  echo "WARNING: ELODEA_POSTGRES_DSN not set; integration suites will skip." >&2
 fi
 go test -race -count=1 ./...
 echo "ok"

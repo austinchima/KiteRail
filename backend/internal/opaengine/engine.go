@@ -4,15 +4,21 @@ package opaengine
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"io/fs"
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"go.uber.org/zap"
 
+	"github.com/austinchima/kiterail/internal/metrics"
 	"github.com/austinchima/kiterail/internal/types"
 	"github.com/open-policy-agent/opa/v1/rego"
 )
@@ -22,6 +28,7 @@ type Engine struct {
 	policyDir string
 	query     rego.PreparedEvalQuery
 	ready     bool
+	version   string
 	logger    *zap.Logger
 	mu        sync.RWMutex
 }
@@ -39,20 +46,64 @@ func New(ctx context.Context, policyDir string, logger *zap.Logger) (*Engine, er
 // Compilation runs outside the lock so requests can use the previous query.
 // A failed reload preserves both that query and its readiness state.
 func (e *Engine) Reload(ctx context.Context) error {
+	if err := e.reload(ctx); err != nil {
+		metrics.PolicyReloadsTotal.WithLabelValues("failure").Inc()
+		return err
+	}
+	metrics.PolicyReloadsTotal.WithLabelValues("success").Inc()
+	metrics.SetPolicyVersion(e.Version())
+	return nil
+}
+
+// WatchForChanges polls the policy directory and reloads when the bundle
+// fingerprint changes (a GitOps sync, a ConfigMap update). A bundle that fails
+// to compile is logged and the last good policy keeps enforcing.
+func (e *Engine) WatchForChanges(ctx context.Context, interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			current, err := bundleVersion(e.policyDir)
+			if err != nil {
+				e.logger.Warn("policy watch: cannot fingerprint bundle", zap.Error(err))
+				continue
+			}
+			if current == e.Version() {
+				continue
+			}
+			if err := e.Reload(ctx); err != nil {
+				e.logger.Error("policy watch: new bundle rejected, keeping previous policy",
+					zap.String("active_version", e.Version()), zap.Error(err))
+				continue
+			}
+			e.logger.Info("policy bundle reloaded", zap.String("policy_version", e.Version()))
+		}
+	}
+}
+
+func (e *Engine) reload(ctx context.Context) error {
 	var query rego.PreparedEvalQuery
 	var err error
+
+	version, err := bundleVersion(e.policyDir)
+	if err != nil {
+		return fmt.Errorf("failed to fingerprint policy bundle: %w", err)
+	}
 
 	if _, statErr := os.Stat(e.policyDir); os.IsNotExist(statErr) {
 		// Directory doesn't exist yet — prepare an empty engine rather than
 		// failing startup. Every evaluation will fall through to the
 		// fail-closed default in Evaluate.
 		query, err = rego.New(
-			rego.Query("data.kiterail.authz.decision"),
+			rego.Query("data.elodea.authz.decision"),
 			rego.StrictBuiltinErrors(true),
 		).PrepareForEval(ctx)
 	} else {
 		query, err = rego.New(
-			rego.Query("data.kiterail.authz.decision"),
+			rego.Query("data.elodea.authz.decision"),
 			rego.Load([]string{loaderPath(e.policyDir)}, nil),
 			// A policy that hits a builtin error at runtime (bad JSON, division
 			// by zero, ...) is BROKEN, not "no match". Without strict errors the
@@ -66,11 +117,62 @@ func (e *Engine) Reload(ctx context.Context) error {
 	}
 
 	ready := hasDecisionPolicy(query)
+	if !ready && usesLegacyPackage(query) {
+		// Refuse the bundle loudly instead of silently denying everything.
+		return fmt.Errorf("policy bundle declares `package kiterail.authz`; rename it to `package elodea.authz`")
+	}
 	e.mu.Lock()
 	e.query = query
 	e.ready = ready
+	e.version = version
 	e.mu.Unlock()
 	return nil
+}
+
+// Version returns the fingerprint of the active policy bundle.
+func (e *Engine) Version() string {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.version
+}
+
+// bundleVersion hashes every policy and data file (path + content, in sorted
+// order), so any edit, addition, or removal yields a new version. A missing
+// directory is the distinct version "none".
+func bundleVersion(policyDir string) (string, error) {
+	if _, err := os.Stat(policyDir); os.IsNotExist(err) {
+		return "none", nil
+	}
+	var files []string
+	err := filepath.WalkDir(policyDir, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		switch strings.ToLower(filepath.Ext(path)) {
+		case ".rego", ".json", ".yaml", ".yml":
+			if !entry.IsDir() {
+				files = append(files, path)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	sort.Strings(files)
+	digest := sha256.New()
+	for _, path := range files {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return "", err
+		}
+		rel, _ := filepath.Rel(policyDir, path)
+		rel = filepath.ToSlash(rel)
+		// hash.Hash writes never fail.
+		_, _ = fmt.Fprintf(digest, "%d:%s;%d:", len(rel), rel, len(content))
+		digest.Write(content)
+	}
+	return "sha256:" + hex.EncodeToString(digest.Sum(nil))[:16], nil
 }
 
 // Ready reports whether the active query has a compiled authorization decision
@@ -89,9 +191,20 @@ func hasDecisionPolicy(query rego.PreparedEvalQuery) bool {
 	for _, module := range query.Modules() {
 		for _, rule := range module.Rules {
 			path := rule.Ref().String()
-			if len(rule.Head.Args) == 0 && (path == "data.kiterail.authz.decision" || strings.HasPrefix(path, "data.kiterail.authz.decision.")) {
+			if len(rule.Head.Args) == 0 && (path == "data.elodea.authz.decision" || strings.HasPrefix(path, "data.elodea.authz.decision.")) {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+// usesLegacyPackage reports whether the bundle still uses the package name
+// from before the product was renamed to Elodea.
+func usesLegacyPackage(query rego.PreparedEvalQuery) bool {
+	for _, module := range query.Modules() {
+		if strings.HasPrefix(module.Package.Path.String(), "data.kiterail.authz") {
+			return true
 		}
 	}
 	return false
@@ -123,17 +236,27 @@ func loaderPath(policyDir string) string {
 // Fails closed on evaluation errors (returns deny with policy_eval_error rule).
 func (e *Engine) Evaluate(ctx context.Context, input types.EvalInput) (types.ProxyDecision, error) {
 	inputMap := map[string]interface{}{
-		"tool":       input.Tool,
-		"arguments":  input.Arguments,
-		"agent":      input.Agent,
-		"timestamp":  input.Timestamp,
-		"raw_method": input.RawMethod,
+		"schema_version":   types.EvalSchemaVersion,
+		"protocol":         input.Protocol,
+		"protocol_version": input.ProtocolVersion,
+		"tool":             input.Tool,
+		"arguments":        input.Arguments,
+		"agent":            input.Agent,
+		"timestamp":        input.Timestamp,
+		"raw_method":       input.RawMethod,
 	}
 
 	e.mu.RLock()
-	query := e.query
+	query, version := e.query, e.version
 	e.mu.RUnlock()
 
+	decision := e.evaluate(ctx, query, inputMap)
+	decision.PolicyVersion = version
+	return decision, nil
+}
+
+// evaluate runs one prepared query and validates its result, failing closed.
+func (e *Engine) evaluate(ctx context.Context, query rego.PreparedEvalQuery, inputMap map[string]interface{}) types.ProxyDecision {
 	rs, err := query.Eval(ctx, rego.EvalInput(inputMap))
 	if err != nil {
 		// Fail closed: log the error and return a deny decision
@@ -142,7 +265,7 @@ func (e *Engine) Evaluate(ctx context.Context, input types.EvalInput) (types.Pro
 			Action:      types.ActionDeny,
 			Rule:        "policy_eval_error",
 			Explanation: "Policy evaluation failed — failing closed",
-		}, nil
+		}
 	}
 
 	// No result is different from a malformed result. Both must have a named
@@ -152,14 +275,14 @@ func (e *Engine) Evaluate(ctx context.Context, input types.EvalInput) (types.Pro
 			Action:      types.ActionDeny,
 			Rule:        "no_policy_decision",
 			Explanation: "No policy produced a decision — failing closed",
-		}, nil
+		}
 	}
 
 	expr := rs[0].Expressions[0].Value
 	fields, ok := expr.(map[string]interface{})
 	if !ok {
 		e.logger.Error("policy returned a non-decision value — failing closed", zap.Any("value", expr))
-		return invalidPolicyDecision(), nil
+		return invalidPolicyDecision()
 	}
 
 	// Start with zero values: pre-filling action with deny would disguise a
@@ -176,10 +299,10 @@ func (e *Engine) Evaluate(ctx context.Context, input types.EvalInput) (types.Pro
 		e.logger.Error("policy engine returned an invalid decision — failing closed",
 			zap.String("action", string(decision.Action)),
 			zap.String("rule", decision.Rule))
-		return invalidPolicyDecision(), nil
+		return invalidPolicyDecision()
 	}
 
-	return decision, nil
+	return decision
 }
 
 // invalidPolicyDecision is the fail-closed result for a policy that produced

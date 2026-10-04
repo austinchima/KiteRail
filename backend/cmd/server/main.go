@@ -9,12 +9,14 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
 
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 	"golang.org/x/time/rate"
 
 	"github.com/austinchima/kiterail/internal/auth"
@@ -23,15 +25,18 @@ import (
 	"github.com/austinchima/kiterail/internal/db"
 	"github.com/austinchima/kiterail/internal/ledger"
 	"github.com/austinchima/kiterail/internal/metrics"
+	"github.com/austinchima/kiterail/internal/notify"
 	"github.com/austinchima/kiterail/internal/opaengine"
 	"github.com/austinchima/kiterail/internal/policystore"
 	"github.com/austinchima/kiterail/internal/proxy"
 	"github.com/austinchima/kiterail/internal/quarantine"
+	"github.com/austinchima/kiterail/internal/sso"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
+// version is overridden at build time: -ldflags "-X main.version=v1.2.3".
 var (
-	version   = "1.1.0"
+	version   = "1.2.0-dev"
 	startTime = time.Now()
 )
 
@@ -45,10 +50,16 @@ func corsMiddleware(allowedOrigins []string) func(http.Handler) http.Handler {
 			}
 			if origin != "" {
 				w.Header().Set("Access-Control-Allow-Origin", origin)
+				// Session cookies ride along only for an explicitly listed
+				// origin, never one admitted by the development wildcard.
+				if slices.Contains(allowedOrigins, origin) {
+					w.Header().Set("Access-Control-Allow-Credentials", "true")
+				}
 			}
 			w.Header().Set("Vary", "Origin")
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, "+auth.CSRFHeader)
+			w.Header().Set("Access-Control-Expose-Headers", "X-Next-Before, X-Elodea-Policy-Version")
 
 			if r.Method == http.MethodOptions {
 				w.WriteHeader(http.StatusOK)
@@ -159,10 +170,28 @@ type httpDeps struct {
 	// orchestrator stops routing NEW traffic before the listener drains.
 	ready *atomic.Bool
 
-	// policyReady reports whether the active OPA query contains KiteRail's
+	// policyReady reports whether the active OPA query contains Elodea's
 	// authorization entry point. A nil function is used only by focused HTTP
 	// tests that do not construct an engine.
 	policyReady func() bool
+
+	// policyVersion reports the active policy bundle fingerprint for /readyz.
+	policyVersion func() string
+
+	// sso serves SSO sign-in and resolves session cookies; nil when SSO is
+	// not configured, leaving bearer tokens as the only human credential.
+	sso ssoProvider
+
+	// metricsOnSeparateListener removes /metrics from the public mux because
+	// it is served on an internal-only listener instead.
+	metricsOnSeparateListener bool
+}
+
+// ssoProvider is the part of *sso.Service the HTTP layer uses.
+type ssoProvider interface {
+	auth.SessionAuthenticator
+	Routes() http.Handler
+	ConfigHandler() http.Handler
 }
 
 // buildHTTPHandler wires three trust domains, each with its own explicit
@@ -187,9 +216,14 @@ func buildHTTPHandler(d httpDeps, logger *zap.Logger) http.Handler {
 		authenticated := auth.Middleware(d.identities, logger, limited)
 		return prometheusMiddleware(corsMiddleware(d.allowedOrigins)(drainMiddleware(d.ready)(authenticated)))
 	}
+	var sessions auth.SessionAuthenticator
+	if d.sso != nil {
+		sessions = d.sso
+	}
+	allowOrigin := func(origin string) bool { return originAllowed(origin, d.allowedOrigins) }
 	humanChain := func(next http.Handler) http.Handler {
 		guarded := auth.ReviewerOrAdmin()(next)
-		authenticated := auth.Middleware(d.identities, logger, guarded)
+		authenticated := auth.HumanMiddleware(d.identities, sessions, allowOrigin, logger, guarded)
 		return prometheusMiddleware(corsMiddleware(d.allowedOrigins)(drainMiddleware(d.ready)(authenticated)))
 	}
 
@@ -230,10 +264,25 @@ func buildHTTPHandler(d httpDeps, logger *zap.Logger) http.Handler {
 			json.NewEncoder(w).Encode(map[string]interface{}{"ready": false, "postgres": false})
 			return
 		}
-		json.NewEncoder(w).Encode(map[string]interface{}{"ready": true, "postgres": true})
+		body := map[string]interface{}{"ready": true, "postgres": true}
+		if d.policyVersion != nil {
+			body["policy_version"] = d.policyVersion()
+		}
+		json.NewEncoder(w).Encode(body)
 	})
 
 	mux.Handle("/api/v1/health", publicChain(healthHandler))
+
+	// --- SSO sign-in (browser redirects; no prior authentication) ---
+	if d.sso != nil {
+		mux.Handle("/auth/", publicChain(d.sso.Routes()))
+		mux.Handle("/api/v1/auth/config", publicChain(d.sso.ConfigHandler()))
+	} else {
+		mux.Handle("/api/v1/auth/config", publicChain(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"sso":false}`))
+		})))
+	}
 	mux.Handle("/readyz", publicChain(readyzHandler))
 
 	// --- Human trust domain (reviewer/admin only) ---
@@ -248,11 +297,22 @@ func buildHTTPHandler(d httpDeps, logger *zap.Logger) http.Handler {
 
 	mux.Handle("/api/v1/dashboard/stats", humanChain(d.dashboard))
 
+	// Who am I: lets a reviewer console show the authenticated identity and
+	// gate admin-only actions without parsing tokens client-side.
+	mux.Handle("/api/v1/me", humanChain(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		identity, _ := auth.FromContext(r.Context())
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"id": identity.ID, "role": string(identity.Role)})
+	})))
+
 	// --- Machine trust domain (agents): POST / only; the proxy rejects other methods ---
 	mux.Handle("/", agentChain(d.proxy))
 
-	// /metrics is public for Prometheus scraping inside the trust boundary.
-	mux.Handle("/metrics", publicChain(promhttp.Handler()))
+	// /metrics is public for Prometheus scraping inside the trust boundary,
+	// unless an internal-only metrics listener is configured.
+	if !d.metricsOnSeparateListener {
+		mux.Handle("/metrics", publicChain(promhttp.Handler()))
+	}
 
 	return mux
 }
@@ -260,46 +320,42 @@ func buildHTTPHandler(d httpDeps, logger *zap.Logger) http.Handler {
 func main() {
 	configPath := flag.String("config", "", "Path to config file")
 	port := flag.String("port", "", "Override listen address")
+	healthcheck := flag.Bool("healthcheck", false, "Probe the local liveness endpoint and exit 0/1 (for container HEALTHCHECK in shell-less images)")
 	flag.Parse()
 
-	logger, err := zap.NewProduction()
-	if err != nil {
-		fmt.Printf("Failed to initialize logger: %v\n", err)
-		os.Exit(1)
+	if *healthcheck {
+		config.ApplyLegacyEnv()
+		os.Exit(runHealthcheck())
 	}
-	defer logger.Sync()
-
-	logger.Info("Starting KiteRail", zap.String("version", version))
 
 	cfg, err := config.Load(*configPath)
 	if err != nil {
-		logger.Fatal("Failed to load config", zap.Error(err))
+		fmt.Fprintf(os.Stderr, "Failed to load config: %v\n", err)
+		os.Exit(1)
 	}
 	if *port != "" {
 		cfg.ListenAddr = *port
 	}
 
+	logger, err := newLogger(cfg.LogLevel)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to initialize logger: %v\n", err)
+		os.Exit(1)
+	}
+	defer logger.Sync()
+
+	logger.Info("Starting Elodea", zap.String("version", version), zap.String("environment", cfg.Environment))
+	if len(cfg.LegacyEnv) > 0 {
+		logger.Warn("KITERAIL_* environment variables are deprecated; rename them to ELODEA_*", zap.Strings("variables", cfg.LegacyEnv))
+	}
+	metrics.BuildInfo.WithLabelValues(version).Set(1)
+
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	// Connect to Postgres with retry.
-	var dbConn *sql.DB
-	for i := range 5 {
-		dbConn, err = sql.Open("postgres", cfg.PostgresDSN)
-		if err == nil {
-			dbConn.SetMaxOpenConns(cfg.PGMaxOpenConns)
-			dbConn.SetMaxIdleConns(cfg.PGMaxIdleConns)
-			dbConn.SetConnMaxLifetime(cfg.PGConnMaxLifetime)
-			err = dbConn.PingContext(ctx)
-			if err == nil {
-				break
-			}
-		}
-		logger.Warn("Failed to connect to postgres, retrying...", zap.Error(err), zap.Int("attempt", i+1))
-		time.Sleep(2 * time.Second)
-	}
+	dbConn, err := connectPostgres(ctx, cfg, logger)
 	if err != nil {
-		logger.Fatal("Failed to connect to postgres after 5 attempts", zap.Error(err))
+		logger.Fatal("Failed to connect to postgres", zap.Error(err))
 	}
 	defer func() { _ = dbConn.Close() }()
 
@@ -315,6 +371,15 @@ func main() {
 	engine, err := opaengine.New(ctx, cfg.PolicyDir, logger)
 	if err != nil {
 		logger.Fatal("Failed to initialise OPA engine", zap.Error(err))
+	}
+	logger.Info("Policy bundle loaded", zap.String("policy_version", engine.Version()), zap.Bool("ready", engine.Ready()))
+
+	// Hot reload: SIGHUP and (optionally) polling apply a newly deployed
+	// bundle without a restart. A bundle that fails to compile is rejected and
+	// the previous policy keeps enforcing.
+	go reloadOnSignal(ctx, engine, logger)
+	if cfg.PolicyReloadInterval > 0 {
+		go engine.WatchForChanges(ctx, cfg.PolicyReloadInterval)
 	}
 
 	qStore, err := quarantine.New(dbConn)
@@ -334,6 +399,7 @@ func main() {
 		proxy.NoOpPublisher{}, qStore, lStore,
 		proxy.WithTargetAuthToken(cfg.TargetAuthToken),
 		proxy.WithMaxBodyBytes(cfg.MaxRequestBodyBytes),
+		proxy.WithUpstreamHeaderTimeout(cfg.WriteTimeout),
 	)
 	if err != nil {
 		logger.Fatal("Failed to create proxy handler", zap.Error(err))
@@ -353,6 +419,19 @@ func main() {
 	}
 	for tok, adminID := range cfg.AdminAPIKeys {
 		identities[tok] = auth.Identity{ID: adminID, Role: auth.RoleAdmin}
+	}
+
+	// Assigned only when enabled: a typed nil pointer in the interface would
+	// look configured to buildHTTPHandler.
+	var ssoDeps ssoProvider
+	if cfg.OIDC.Enabled() {
+		ssoService := sso.New(cfg.OIDC, cfg.AllowedOrigins, db.New(dbConn), logger)
+		ssoDeps = ssoService
+		go ssoService.Run(ctx)
+		if cfg.Environment == "production" && len(cfg.ReviewerAPIKeys)+len(cfg.AdminAPIKeys) > 0 {
+			logger.Warn("SSO is enabled and static reviewer/admin tokens are still configured; keep them only as break-glass access",
+				zap.Int("static_human_tokens", len(cfg.ReviewerAPIKeys)+len(cfg.AdminAPIKeys)))
+		}
 	}
 
 	// Ready only after every dependency above has been constructed — the
@@ -375,7 +454,24 @@ func main() {
 		allowedOrigins: cfg.AllowedOrigins,
 		ready:          ready,
 		policyReady:    engine.Ready,
+		policyVersion:  engine.Version,
+		sso:            ssoDeps,
+
+		metricsOnSeparateListener: cfg.MetricsListenAddr != "",
 	}, logger)
+
+	var metricsSrv *http.Server
+	if cfg.MetricsListenAddr != "" {
+		metricsMux := http.NewServeMux()
+		metricsMux.Handle("/metrics", promhttp.Handler())
+		metricsSrv = &http.Server{Addr: cfg.MetricsListenAddr, Handler: metricsMux, ReadHeaderTimeout: cfg.ReadHeaderTimeout}
+		go func() {
+			logger.Info("Metrics listening", zap.String("addr", cfg.MetricsListenAddr))
+			if err := metricsSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				logger.Error("Metrics listener failed", zap.Error(err))
+			}
+		}()
+	}
 
 	srv := &http.Server{
 		Addr:              cfg.ListenAddr,
@@ -388,7 +484,7 @@ func main() {
 	}
 
 	go func() {
-		logger.Info("KiteRail listening",
+		logger.Info("Elodea listening",
 			zap.String("addr", cfg.ListenAddr),
 			zap.Bool("tls", cfg.TLSCertFile != ""),
 		)
@@ -408,6 +504,7 @@ func main() {
 	// an authenticated upstream would 401/403 every approved replay.
 	worker := quarantine.NewWorker(qStore, lStore, logger, cfg.TargetURL,
 		quarantine.WithTargetAuthToken(cfg.TargetAuthToken),
+		quarantine.WithPolicyRecheck(proxy.NewPolicyRecheck(proxy.MCPAdapter{}, engine)),
 	)
 	workerCtx, workerCancel := context.WithCancel(context.Background())
 	defer workerCancel()
@@ -416,6 +513,20 @@ func main() {
 		defer close(workerDone)
 		worker.Run(workerCtx)
 	}()
+
+	// Held-action notifications go through the Postgres outbox, so restarts
+	// and multiple replicas neither lose nor duplicate them.
+	var channels []notify.Channel
+	if cfg.Notify.SlackWebhookURL != "" {
+		channels = append(channels, notify.NewSlack(cfg.Notify.SlackWebhookURL))
+	}
+	if cfg.Notify.WebhookURL != "" {
+		channels = append(channels, notify.NewWebhook(cfg.Notify.WebhookURL, cfg.Notify.WebhookSecret))
+	}
+	if len(channels) > 0 {
+		go notify.NewWorker(db.New(dbConn), channels, cfg.ConsoleURL, logger).Run(workerCtx)
+		logger.Info("Held-action notifications enabled", zap.Int("channels", len(channels)))
+	}
 
 	<-ctx.Done()
 	logger.Info("Shutting down gracefully...")
@@ -443,6 +554,9 @@ func main() {
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownCancel()
 
+	if metricsSrv != nil {
+		_ = metricsSrv.Shutdown(shutdownCtx)
+	}
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		// Shutdown's return is checked: a timeout here means in-flight
 		// requests did not finish in the window — say so loudly rather than
@@ -453,4 +567,90 @@ func main() {
 	}
 
 	logger.Info("Shutdown complete")
+}
+
+// newLogger builds the production JSON logger at the configured level.
+func newLogger(level string) (*zap.Logger, error) {
+	cfg := zap.NewProductionConfig()
+	if level != "" {
+		parsed, err := zapcore.ParseLevel(level)
+		if err != nil {
+			return nil, err
+		}
+		cfg.Level = zap.NewAtomicLevelAt(parsed)
+	}
+	return cfg.Build()
+}
+
+// connectPostgres opens one pool and pings it with bounded, cancellable
+// retries, so a database that is still starting does not crash-loop the pod.
+func connectPostgres(ctx context.Context, cfg *config.Config, logger *zap.Logger) (*sql.DB, error) {
+	dbConn, err := sql.Open("postgres", cfg.PostgresDSN)
+	if err != nil {
+		return nil, err
+	}
+	dbConn.SetMaxOpenConns(cfg.PGMaxOpenConns)
+	dbConn.SetMaxIdleConns(cfg.PGMaxIdleConns)
+	dbConn.SetConnMaxLifetime(cfg.PGConnMaxLifetime)
+
+	const attempts = 10
+	for attempt := 1; ; attempt++ {
+		pingCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		err = dbConn.PingContext(pingCtx)
+		cancel()
+		if err == nil {
+			return dbConn, nil
+		}
+		if attempt == attempts {
+			_ = dbConn.Close()
+			return nil, fmt.Errorf("postgres unreachable after %d attempts: %w", attempts, err)
+		}
+		logger.Warn("Postgres not reachable yet, retrying", zap.Error(err), zap.Int("attempt", attempt))
+		select {
+		case <-ctx.Done():
+			_ = dbConn.Close()
+			return nil, ctx.Err()
+		case <-time.After(2 * time.Second):
+		}
+	}
+}
+
+// reloadOnSignal reloads the policy bundle on SIGHUP.
+func reloadOnSignal(ctx context.Context, engine *opaengine.Engine, logger *zap.Logger) {
+	hup := make(chan os.Signal, 1)
+	signal.Notify(hup, syscall.SIGHUP)
+	defer signal.Stop(hup)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-hup:
+			if err := engine.Reload(ctx); err != nil {
+				logger.Error("SIGHUP policy reload rejected, keeping previous policy", zap.Error(err))
+				continue
+			}
+			logger.Info("Policy bundle reloaded on SIGHUP", zap.String("policy_version", engine.Version()))
+		}
+	}
+}
+
+// runHealthcheck probes the liveness endpoint. The URL defaults to the
+// standard port and can be overridden with ELODEA_HEALTHCHECK_URL.
+func runHealthcheck() int {
+	target := os.Getenv("ELODEA_HEALTHCHECK_URL")
+	if target == "" {
+		target = "http://127.0.0.1:8080/api/v1/health"
+	}
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Get(target)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "healthcheck: %v\n", err)
+		return 1
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		fmt.Fprintf(os.Stderr, "healthcheck: status %d\n", resp.StatusCode)
+		return 1
+	}
+	return 0
 }

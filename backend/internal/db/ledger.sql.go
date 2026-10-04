@@ -50,7 +50,7 @@ func (q *Queries) GetLatestLedgerEntry(ctx context.Context) (GetLatestLedgerEntr
 }
 
 const getLedgerEntry = `-- name: GetLedgerEntry :one
-SELECT seq_num, timestamp, agent, tool, decision, policy_rule, payload_hash, prev_hash, hash, request_id
+SELECT seq_num, timestamp, agent, tool, decision, policy_rule, payload_hash, prev_hash, hash, request_id, policy_version
 FROM ledger WHERE seq_num = $1
 `
 
@@ -68,26 +68,45 @@ func (q *Queries) GetLedgerEntry(ctx context.Context, seqNum int64) (Ledger, err
 		&i.PrevHash,
 		&i.Hash,
 		&i.RequestID,
+		&i.PolicyVersion,
 	)
 	return i, err
 }
 
+const getLedgerHead = `-- name: GetLedgerHead :one
+SELECT seq_num, hash, timestamp FROM ledger ORDER BY seq_num DESC LIMIT 1
+`
+
+type GetLedgerHeadRow struct {
+	SeqNum    int64     `json:"seq_num"`
+	Hash      string    `json:"hash"`
+	Timestamp time.Time `json:"timestamp"`
+}
+
+func (q *Queries) GetLedgerHead(ctx context.Context) (GetLedgerHeadRow, error) {
+	row := q.db.QueryRowContext(ctx, getLedgerHead)
+	var i GetLedgerHeadRow
+	err := row.Scan(&i.SeqNum, &i.Hash, &i.Timestamp)
+	return i, err
+}
+
 const insertLedgerEntry = `-- name: InsertLedgerEntry :exec
-INSERT INTO ledger (seq_num, timestamp, agent, tool, decision, policy_rule, payload_hash, prev_hash, hash, request_id)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+INSERT INTO ledger (seq_num, timestamp, agent, tool, decision, policy_rule, payload_hash, prev_hash, hash, request_id, policy_version)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 `
 
 type InsertLedgerEntryParams struct {
-	SeqNum      int64     `json:"seq_num"`
-	Timestamp   time.Time `json:"timestamp"`
-	Agent       string    `json:"agent"`
-	Tool        string    `json:"tool"`
-	Decision    string    `json:"decision"`
-	PolicyRule  string    `json:"policy_rule"`
-	PayloadHash string    `json:"payload_hash"`
-	PrevHash    string    `json:"prev_hash"`
-	Hash        string    `json:"hash"`
-	RequestID   string    `json:"request_id"`
+	SeqNum        int64     `json:"seq_num"`
+	Timestamp     time.Time `json:"timestamp"`
+	Agent         string    `json:"agent"`
+	Tool          string    `json:"tool"`
+	Decision      string    `json:"decision"`
+	PolicyRule    string    `json:"policy_rule"`
+	PayloadHash   string    `json:"payload_hash"`
+	PrevHash      string    `json:"prev_hash"`
+	Hash          string    `json:"hash"`
+	RequestID     string    `json:"request_id"`
+	PolicyVersion string    `json:"policy_version"`
 }
 
 func (q *Queries) InsertLedgerEntry(ctx context.Context, arg InsertLedgerEntryParams) error {
@@ -102,12 +121,13 @@ func (q *Queries) InsertLedgerEntry(ctx context.Context, arg InsertLedgerEntryPa
 		arg.PrevHash,
 		arg.Hash,
 		arg.RequestID,
+		arg.PolicyVersion,
 	)
 	return err
 }
 
 const listLedgerEntriesAsc = `-- name: ListLedgerEntriesAsc :many
-SELECT seq_num, timestamp, agent, tool, decision, policy_rule, payload_hash, prev_hash, hash, request_id
+SELECT seq_num, timestamp, agent, tool, decision, policy_rule, payload_hash, prev_hash, hash, request_id, policy_version
 FROM ledger ORDER BY seq_num ASC
 `
 
@@ -131,6 +151,68 @@ func (q *Queries) ListLedgerEntriesAsc(ctx context.Context) ([]Ledger, error) {
 			&i.PrevHash,
 			&i.Hash,
 			&i.RequestID,
+			&i.PolicyVersion,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listLedgerPage = `-- name: ListLedgerPage :many
+SELECT seq_num, timestamp, agent, tool, decision, policy_rule, payload_hash, prev_hash, hash, request_id, policy_version
+FROM ledger
+WHERE seq_num < $1::bigint
+  AND ($2::text = '' OR agent = $2::text)
+  AND ($3::text = '' OR decision = $3::text)
+  AND ($4::text = '' OR tool = $4::text)
+ORDER BY seq_num DESC
+LIMIT $5::int
+`
+
+type ListLedgerPageParams struct {
+	BeforeSeq int64  `json:"before_seq"`
+	Agent     string `json:"agent"`
+	Decision  string `json:"decision"`
+	Tool      string `json:"tool"`
+	PageSize  int32  `json:"page_size"`
+}
+
+// Keyset pagination, newest first. Empty filters match everything.
+func (q *Queries) ListLedgerPage(ctx context.Context, arg ListLedgerPageParams) ([]Ledger, error) {
+	rows, err := q.db.QueryContext(ctx, listLedgerPage,
+		arg.BeforeSeq,
+		arg.Agent,
+		arg.Decision,
+		arg.Tool,
+		arg.PageSize,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Ledger{}
+	for rows.Next() {
+		var i Ledger
+		if err := rows.Scan(
+			&i.SeqNum,
+			&i.Timestamp,
+			&i.Agent,
+			&i.Tool,
+			&i.Decision,
+			&i.PolicyRule,
+			&i.PayloadHash,
+			&i.PrevHash,
+			&i.Hash,
+			&i.RequestID,
+			&i.PolicyVersion,
 		); err != nil {
 			return nil, err
 		}
@@ -146,7 +228,7 @@ func (q *Queries) ListLedgerEntriesAsc(ctx context.Context) ([]Ledger, error) {
 }
 
 const listRecentLedgerEntries = `-- name: ListRecentLedgerEntries :many
-SELECT seq_num, timestamp, agent, tool, decision, policy_rule, payload_hash, prev_hash, hash, request_id
+SELECT seq_num, timestamp, agent, tool, decision, policy_rule, payload_hash, prev_hash, hash, request_id, policy_version
 FROM ledger ORDER BY seq_num DESC LIMIT 100
 `
 
@@ -170,6 +252,7 @@ func (q *Queries) ListRecentLedgerEntries(ctx context.Context) ([]Ledger, error)
 			&i.PrevHash,
 			&i.Hash,
 			&i.RequestID,
+			&i.PolicyVersion,
 		); err != nil {
 			return nil, err
 		}

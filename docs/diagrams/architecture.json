@@ -1,5 +1,5 @@
 {
-  "t": "KiteRail Detailed Architecture",
+  "t": "Elodea Detailed Architecture",
   "i": [
     ["Autonomous AI Agent", "function", "Agent Plane"],
     ["Ingress Middleware", "firewall", "CORS & Auth"],

@@ -54,7 +54,7 @@ func TestIntegration_ComplianceStatus(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	_, err = quarantineStore.Create(context.Background(), "agent_3", "tool_c", []byte(`{"requires":"review"}`), nil)
+	_, err = quarantineStore.Create(context.Background(), "agent_3", "tool_c", []byte(`{"requires":"review"}`), nil, "test_rule", "held for test")
 	require.NoError(t, err)
 
 	handler := NewHandler(ledgerStore, quarantineStore, zap.NewNop())

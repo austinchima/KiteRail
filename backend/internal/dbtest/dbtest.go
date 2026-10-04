@@ -1,4 +1,4 @@
-// Package dbtest provides a shared PostgreSQL harness for KiteRail's
+// Package dbtest provides a shared PostgreSQL harness for Elodea's
 // integration tests: one DSN reader, one advisory-lock owner, migration
 // application, and per-test table resets.
 //
@@ -28,13 +28,13 @@ const lockKey int64 = 4242420427
 // pre-extraction quarantine tests.
 func DSN(t *testing.T) string {
 	t.Helper()
-	if dsn := os.Getenv("KITERAIL_POSTGRES_DSN"); dsn != "" {
+	if dsn := os.Getenv("ELODEA_POSTGRES_DSN"); dsn != "" {
 		return dsn
 	}
 	if dsn := os.Getenv("QUARANTINE_TEST_DSN"); dsn != "" {
 		return dsn
 	}
-	t.Skip("KITERAIL_POSTGRES_DSN or QUARANTINE_TEST_DSN not set")
+	t.Skip("ELODEA_POSTGRES_DSN or QUARANTINE_TEST_DSN not set")
 	return ""
 }
 
@@ -69,8 +69,17 @@ func Open(t *testing.T) *sql.DB {
 // constants, never derived from request data.
 func Reset(t *testing.T, sqlDB *sql.DB, tables ...string) {
 	t.Helper()
+	ctx := context.Background()
 	for _, table := range tables {
-		_, err := sqlDB.ExecContext(context.Background(), "TRUNCATE "+table)
+		// The ledger is append-only (migration 005); test isolation is the
+		// explicit maintenance opt-in, scoped to one transaction.
+		tx, err := sqlDB.BeginTx(ctx, nil)
 		require.NoError(t, err)
+		_, err = tx.ExecContext(ctx, "SET LOCAL kiterail.ledger_maintenance = 'on'")
+		require.NoError(t, err)
+		// CASCADE: notification_outbox references quarantine.
+		_, err = tx.ExecContext(ctx, "TRUNCATE "+table+" CASCADE")
+		require.NoError(t, err)
+		require.NoError(t, tx.Commit())
 	}
 }

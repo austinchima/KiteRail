@@ -75,7 +75,7 @@ func (m *memLedger) count() int {
 
 type fakeQStore struct{}
 
-func (fakeQStore) Create(ctx context.Context, agentID, toolName string, payload []byte, headers http.Header) (string, error) {
+func (fakeQStore) Create(ctx context.Context, agentID, toolName string, payload []byte, headers http.Header, rule, explanation string) (string, error) {
 	return "q-1", nil
 }
 func (fakeQStore) Get(ctx context.Context, id string) (db.QuarantineEntry, error) {
@@ -120,6 +120,13 @@ type fixture struct {
 
 func newFixture(t *testing.T, rps float64, burst int) *fixture {
 	t.Helper()
+	return newFixtureWith(t, rps, burst, nil)
+}
+
+// newFixtureWith lets a test adjust the HTTP dependencies (for example, to
+// plug in SSO) before the handler is built.
+func newFixtureWith(t *testing.T, rps float64, burst int, adjust func(*httpDeps)) *fixture {
+	t.Helper()
 
 	f := &fixture{
 		ledger: &memLedger{},
@@ -151,7 +158,7 @@ func newFixture(t *testing.T, rps float64, burst int) *fixture {
 	f.policyReady = &atomic.Bool{}
 	f.policyReady.Store(true)
 
-	handler := buildHTTPHandler(httpDeps{
+	deps := httpDeps{
 		version:        "test",
 		startTime:      time.Now(),
 		dbConn:         dbConn,
@@ -166,8 +173,11 @@ func newFixture(t *testing.T, rps float64, burst int) *fixture {
 		allowedOrigins: []string{"*"},
 		ready:          f.ready,
 		policyReady:    f.policyReady.Load,
-	}, zap.NewNop())
-	f.handler = handler
+	}
+	if adjust != nil {
+		adjust(&deps)
+	}
+	f.handler = buildHTTPHandler(deps, zap.NewNop())
 
 	return f
 }
@@ -331,6 +341,7 @@ func TestHumanRoutes_RoleBoundary(t *testing.T) {
 		"/api/v1/ledger",
 		"/api/v1/policies",
 		"/api/v1/dashboard/stats",
+		"/api/v1/me",
 	}
 
 	for _, p := range humanPaths {
@@ -453,4 +464,11 @@ func TestRateLimit_UnauthenticatedRequestsNeverConsumeBuckets(t *testing.T) {
 	// The bucket was untouched by unauthenticated traffic.
 	rr := doReq(t, f.handler, http.MethodPost, "/", testAgentATok, rpcBody(t), nil)
 	assert.Equal(t, http.StatusOK, rr.Code)
+}
+
+func TestMe_ReportsAuthenticatedIdentity(t *testing.T) {
+	f := newFixture(t, 1000, 1000)
+	rr := doReq(t, f.handler, http.MethodGet, "/api/v1/me", testAdminTok, nil, nil)
+	require.Equal(t, http.StatusOK, rr.Code)
+	assert.Contains(t, rr.Body.String(), `"role":"admin"`)
 }

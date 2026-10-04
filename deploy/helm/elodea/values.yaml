@@ -1,0 +1,129 @@
+replicaCount: 2
+
+image:
+  repository: ghcr.io/austinchima/elodea
+  # Defaults to the chart appVersion. Prefer pinning `digest` in production.
+  tag: ""
+  digest: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+config:
+  # REQUIRED: the single upstream every allowed or approved action is sent to.
+  targetURL: ""
+  environment: production
+  logLevel: info
+  # TLS is usually terminated by the ingress controller or service mesh.
+  tlsTerminatedUpstream: true
+  # Exact browser origins allowed to call the reviewer API (dashboard).
+  allowedOrigins: []
+  rateLimitRPS: 10
+  rateLimitBurst: 20
+  policyReloadInterval: 30s
+  maxRequestBodyBytes: 1048576
+
+# Secret with these keys (create it with your secret manager / ExternalSecrets):
+#   postgres-dsn       postgres://user:pass@host:5432/db?sslmode=require
+#   agent-keys         one "token:agent-id" per line
+#   reviewer-keys      one "token:reviewer-id" per line (optional with SSO)
+#   admin-keys         (optional) one "token:admin-id" per line
+#   target-auth-token  (optional) credential Elodea presents upstream
+#   oidc-client-secret (SSO only) the OIDC client secret
+#   slack-webhook-url  (notifications) Slack incoming-webhook URL
+#   webhook-secret     (notifications) HMAC secret for the generic webhook
+# Secrets are mounted as files, never exposed as environment variables.
+secret:
+  name: ""
+  # With SSO enabled, static reviewer/admin keys are break-glass access only;
+  # set this to false to run with SSO alone.
+  hasReviewerKeys: true
+  hasAdminKeys: false
+  hasTargetAuthToken: false
+  hasSlackWebhookURL: false
+  hasWebhookSecret: false
+
+# Held-action notifications: tell reviewers the moment an action is held.
+# Slack needs secret.hasSlackWebhookURL; a generic webhook (PagerDuty,
+# Opsgenie, ServiceNow, Teams workflows, your own service) is signed with
+# secret.hasWebhookSecret, which production requires.
+notify:
+  webhookURL: ""
+# Where reviewers open the console; notifications link to its approvals queue.
+consoleURL: ""
+
+# Single sign-on for reviewers and admins (OIDC: Okta, Entra ID, Google
+# Workspace, Auth0, Keycloak). Roles come from IdP groups; approvals are
+# recorded under the verified identity. Requires config.allowedOrigins to
+# list the console origin, and egress to the IdP if networkPolicy is enabled.
+oidc:
+  enabled: false
+  issuer: ""            # e.g. https://corp.okta.com
+  clientID: ""
+  redirectURL: ""       # https://<elodea host>/auth/callback
+  providerName: ""      # sign-in button label, e.g. "Okta"
+  scopes: []            # default openid,email,profile; add "groups" for Okta
+  groupsClaim: ""       # default "groups"
+  identityClaim: ""     # default "email" (must be verified); Entra: preferred_username
+  reviewerGroups: []
+  adminGroups: []
+  sessionTTL: ""        # default 8h
+  sessionIdleTTL: ""    # default 1h
+  cookieSameSite: ""    # lax (default), strict, or none for a console on another site
+
+policies:
+  # Name of a ConfigMap holding *.rego files. Empty uses the bundle baked
+  # into the image. ConfigMap updates are hot-reloaded (policyReloadInterval).
+  configMap: ""
+
+service:
+  type: ClusterIP
+  port: 8080
+
+metrics:
+  # Served on a separate internal-only port instead of the ingress port.
+  port: 9090
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    labels: {}
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+
+networkPolicy:
+  enabled: false
+  # Pods allowed to call the proxy / reviewer API.
+  ingressFrom: []
+  # Egress rules for Postgres and the upstream target; DNS is always allowed.
+  egressTo: []
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+podAnnotations: {}
+podLabels: {}
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    memory: 512Mi
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+topologySpreadConstraints: []
+
+# Allows in-flight requests to finish after readiness flips on SIGTERM.
+terminationGracePeriodSeconds: 30

@@ -14,18 +14,39 @@ import (
 type Querier interface {
 	ApproveQuarantineEntry(ctx context.Context, arg ApproveQuarantineEntryParams) (sql.Result, error)
 	ClaimApprovedForReplay(ctx context.Context, limit int32) ([]Quarantine, error)
+	// Leases due rows for a few minutes while they are sent. A replica that
+	// crashes mid-send leaves the lease to expire, and the row is retried.
+	ClaimDueNotifications(ctx context.Context, arg ClaimDueNotificationsParams) ([]ClaimDueNotificationsRow, error)
+	// Single use: the row is deleted as it is read, so a replayed callback finds
+	// nothing. Expired rows never match.
+	ConsumeLoginAttempt(ctx context.Context, state string) (ConsumeLoginAttemptRow, error)
 	CountTodayActions(ctx context.Context) (int64, error)
 	CountTodayViolations(ctx context.Context) (int64, error)
+	CreateLoginAttempt(ctx context.Context, arg CreateLoginAttemptParams) error
 	CreateQuarantineEntry(ctx context.Context, arg CreateQuarantineEntryParams) (string, error)
+	CreateSession(ctx context.Context, arg CreateSessionParams) error
+	DeleteExpiredLoginAttempts(ctx context.Context) error
+	DeleteExpiredSessions(ctx context.Context) error
 	DenyQuarantineEntry(ctx context.Context, arg DenyQuarantineEntryParams) (sql.Result, error)
+	// Queue every pending held action for every configured channel. Rows that
+	// already exist are left alone, so this is safe to run on every tick.
+	EnqueueHeldNotifications(ctx context.Context, channels []string) error
+	// Active means not revoked, before its absolute expiry, and seen within the
+	// idle window ($2 is the idle cutoff).
+	GetActiveSession(ctx context.Context, arg GetActiveSessionParams) (GetActiveSessionRow, error)
 	GetLatestLedgerEntry(ctx context.Context) (GetLatestLedgerEntryRow, error)
 	GetLedgerEntry(ctx context.Context, seqNum int64) (Ledger, error)
+	GetLedgerHead(ctx context.Context) (GetLedgerHeadRow, error)
 	GetQuarantineEntry(ctx context.Context, dollar_1 uuid.UUID) (Quarantine, error)
 	GetQuarantineEntryForReplay(ctx context.Context, dollar_1 uuid.UUID) (Quarantine, error)
 	InsertLedgerEntry(ctx context.Context, arg InsertLedgerEntryParams) error
 	ListLedgerEntriesAsc(ctx context.Context) ([]Ledger, error)
+	// Keyset pagination, newest first. Empty filters match everything.
+	ListLedgerPage(ctx context.Context, arg ListLedgerPageParams) ([]Ledger, error)
 	ListQuarantineByStatus(ctx context.Context, status string) ([]Quarantine, error)
 	ListRecentLedgerEntries(ctx context.Context) ([]Ledger, error)
+	MarkNotificationDelivered(ctx context.Context, arg MarkNotificationDeliveredParams) error
+	MarkNotificationFailed(ctx context.Context, arg MarkNotificationFailedParams) error
 	// Guard must match the state the worker is in when it calls this: the entry
 	// was claimed to 'replaying'. A guard on 'approved' here silently matches
 	// zero rows, and the :execresult RowsAffected check in the Store is what
@@ -34,6 +55,8 @@ type Querier interface {
 	MarkReplayed(ctx context.Context, dollar_1 uuid.UUID) (sql.Result, error)
 	RecoverStuckReplays(ctx context.Context) (int64, error)
 	ReturnToApproved(ctx context.Context, dollar_1 uuid.UUID) (sql.Result, error)
+	RevokeSession(ctx context.Context, idHash string) error
+	TouchSession(ctx context.Context, idHash string) error
 }
 
 var _ Querier = (*Queries)(nil)

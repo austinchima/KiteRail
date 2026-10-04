@@ -1,0 +1,29 @@
+config:
+  targetURL: https://payments.internal.example.com/mcp
+  allowedOrigins: ["https://elodea.example.com"]
+secret:
+  name: elodea-secrets
+  hasAdminKeys: true
+  hasSlackWebhookURL: true
+  hasWebhookSecret: true
+policies:
+  configMap: elodea-policies
+networkPolicy:
+  enabled: true
+metrics:
+  serviceMonitor:
+    enabled: true
+autoscaling:
+  enabled: true
+oidc:
+  enabled: true
+  issuer: https://corp.okta.com
+  clientID: elodea
+  redirectURL: https://elodea.example.com/auth/callback
+  providerName: Okta
+  scopes: [openid, email, profile, groups]
+  reviewerGroups: [treasury-reviewers]
+  adminGroups: [elodea-admins]
+consoleURL: https://elodea-console.example.com
+notify:
+  webhookURL: https://hooks.example.com/elodea

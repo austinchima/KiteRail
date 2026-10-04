@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 )
 
 // Policy represents a security policy.
@@ -117,11 +118,12 @@ func parseMetadata(content string) (title, trigger, action string) {
 		}
 	}
 
-	// Fallback if not specifically tagged, just grab first comment as title
+	// Fallback if not specifically tagged: the first comment line that reads
+	// as prose (skips separator rules such as "# =====").
 	if title == "" {
 		for _, line := range lines {
 			line = strings.TrimSpace(line)
-			if strings.HasPrefix(line, "# ") {
+			if strings.HasPrefix(line, "# ") && strings.ContainsFunc(line, unicode.IsLetter) {
 				title = strings.TrimPrefix(line, "# ")
 				break
 			}

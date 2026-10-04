@@ -66,7 +66,7 @@ func TestEngine_WithPolicies(t *testing.T) {
 	policyPath := filepath.Join(tmpDir, "policy.rego")
 
 	regoContent := `
-package kiterail.authz
+package elodea.authz
 
 import rego.v1
 
@@ -228,7 +228,7 @@ func TestEngine_InvalidDecisions(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	regoContent := `
-package kiterail.authz
+package elodea.authz
 
 import rego.v1
 
@@ -280,7 +280,7 @@ func TestEngine_EvalError(t *testing.T) {
 	// json.unmarshal on invalid input is a builtin runtime error: the policy
 	// compiles but evaluation fails, exercising the fail-closed branch.
 	regoContent := `
-package kiterail.authz
+package elodea.authz
 
 import rego.v1
 

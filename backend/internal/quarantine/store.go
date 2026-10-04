@@ -74,9 +74,10 @@ func New(sqlDB *sql.DB) (*Store, error) {
 	return &Store{q: db.New(sqlDB), sqlDB: sqlDB}, nil
 }
 
-// Create retains the original body and replay-safe protocol metadata. Filtering
-// at the persistence boundary prevents callers from accidentally storing tokens.
-func (s *Store) Create(ctx context.Context, agentID, toolName string, payload []byte, headers http.Header) (string, error) {
+// Create retains the original body, replay-safe protocol metadata, and the
+// rule that held it. Filtering at the persistence boundary prevents callers
+// from accidentally storing tokens.
+func (s *Store) Create(ctx context.Context, agentID, toolName string, payload []byte, headers http.Header, rule, explanation string) (string, error) {
 	requestHeaders, err := json.Marshal(mcp.CaptureReplayHeaders(headers))
 	if err != nil {
 		return "", fmt.Errorf("encode replay headers: %w", err)
@@ -87,6 +88,8 @@ func (s *Store) Create(ctx context.Context, agentID, toolName string, payload []
 		Payload:        payload,
 		CreatedAt:      time.Now(),
 		RequestHeaders: requestHeaders,
+		PolicyRule:     rule,
+		Explanation:    explanation,
 	})
 }
 
@@ -121,6 +124,9 @@ func (s *Store) Get(ctx context.Context, id string) (db.QuarantineEntry, error) 
 		return db.QuarantineEntry{}, ErrNotFound
 	}
 	m, err := s.q.GetQuarantineEntry(ctx, qid)
+	if errors.Is(err, sql.ErrNoRows) {
+		return db.QuarantineEntry{}, ErrNotFound
+	}
 	if err != nil {
 		return db.QuarantineEntry{}, err
 	}
@@ -154,7 +160,7 @@ func (s *Store) List(ctx context.Context, status string) ([]db.QuarantineEntry, 
 func (s *Store) Approve(ctx context.Context, id, approvedBy string) error {
 	qid, err := parseQuarantineID(id)
 	if err != nil {
-		return err
+		return ErrNotFound
 	}
 	res, err := s.q.ApproveQuarantineEntry(ctx, db.ApproveQuarantineEntryParams{
 		Status:     StatusApproved,
@@ -221,7 +227,9 @@ func (s *Store) ReturnToApproved(ctx context.Context, id string) error {
 }
 
 // RecoverStuckReplays resets entries left in 'replaying' by a crash back to
-// 'approved', and returns how many were recovered. Callers must hold the replay
+// 'approved', counting the interrupted replay as an attempt so a request that
+// keeps killing the worker eventually exhausts instead of looping forever. It
+// returns how many were recovered. Callers must hold the replay
 // lock so another live worker's requests cannot be mistaken for crashed work.
 func (s *Store) RecoverStuckReplays(ctx context.Context) (int64, error) {
 	return s.q.RecoverStuckReplays(ctx)
@@ -230,7 +238,7 @@ func (s *Store) RecoverStuckReplays(ctx context.Context) (int64, error) {
 func (s *Store) Deny(ctx context.Context, id, deniedBy, reason string) error {
 	qid, err := parseQuarantineID(id)
 	if err != nil {
-		return err
+		return ErrNotFound
 	}
 	res, err := s.q.DenyQuarantineEntry(ctx, db.DenyQuarantineEntryParams{
 		Status:     StatusDenied,

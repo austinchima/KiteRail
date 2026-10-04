@@ -1,0 +1,213 @@
+{{- if not .Values.config.targetURL }}
+{{- fail "config.targetURL is required" }}
+{{- end }}
+{{- if not .Values.secret.name }}
+{{- fail "secret.name is required (see values.yaml for the expected keys)" }}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "elodea.fullname" . }}
+  labels:
+    {{- include "elodea.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "elodea.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "elodea.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "elodea.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: elodea
+          image: {{ include "elodea.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          ports:
+            - name: http
+              containerPort: 8080
+            - name: metrics
+              containerPort: {{ .Values.metrics.port }}
+          env:
+            - name: ELODEA_LISTEN_ADDR
+              value: ":8080"
+            - name: ELODEA_METRICS_LISTEN_ADDR
+              value: {{ printf ":%v" .Values.metrics.port | quote }}
+            - name: ELODEA_TARGET_URL
+              value: {{ .Values.config.targetURL | quote }}
+            - name: ELODEA_ENVIRONMENT
+              value: {{ .Values.config.environment | quote }}
+            - name: ELODEA_LOG_LEVEL
+              value: {{ .Values.config.logLevel | quote }}
+            - name: ELODEA_TLS_TERMINATED_UPSTREAM
+              value: {{ .Values.config.tlsTerminatedUpstream | quote }}
+            - name: ELODEA_POLICY_RELOAD_INTERVAL
+              value: {{ .Values.config.policyReloadInterval | quote }}
+            {{- with .Values.config.allowedOrigins }}
+            - name: ELODEA_ALLOWED_ORIGINS
+              value: {{ join "," . | quote }}
+            {{- end }}
+            - name: ELODEA_POLICY_DIR
+              value: /app/policies
+            - name: ELODEA_POSTGRES_DSN_FILE
+              value: /etc/elodea/secrets/postgres-dsn
+            - name: ELODEA_API_KEYS_FILE
+              value: /etc/elodea/secrets/agent-keys
+            {{- if .Values.secret.hasReviewerKeys }}
+            - name: ELODEA_REVIEWER_API_KEYS_FILE
+              value: /etc/elodea/secrets/reviewer-keys
+            {{- end }}
+            {{- if .Values.secret.hasAdminKeys }}
+            - name: ELODEA_ADMIN_API_KEYS_FILE
+              value: /etc/elodea/secrets/admin-keys
+            {{- end }}
+            {{- if .Values.secret.hasTargetAuthToken }}
+            - name: ELODEA_TARGET_AUTH_TOKEN_FILE
+              value: /etc/elodea/secrets/target-auth-token
+            {{- end }}
+            {{- with .Values.consoleURL }}
+            - name: ELODEA_CONSOLE_URL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- if .Values.secret.hasSlackWebhookURL }}
+            - name: ELODEA_NOTIFY_SLACK_WEBHOOK_URL_FILE
+              value: /etc/elodea/secrets/slack-webhook-url
+            {{- end }}
+            {{- with .Values.notify.webhookURL }}
+            - name: ELODEA_NOTIFY_WEBHOOK_URL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- if .Values.secret.hasWebhookSecret }}
+            - name: ELODEA_NOTIFY_WEBHOOK_SECRET_FILE
+              value: /etc/elodea/secrets/webhook-secret
+            {{- end }}
+            {{- if .Values.oidc.enabled }}
+            - name: ELODEA_OIDC_ISSUER
+              value: {{ required "oidc.issuer is required when oidc.enabled" .Values.oidc.issuer | quote }}
+            - name: ELODEA_OIDC_CLIENT_ID
+              value: {{ required "oidc.clientID is required when oidc.enabled" .Values.oidc.clientID | quote }}
+            - name: ELODEA_OIDC_CLIENT_SECRET_FILE
+              value: /etc/elodea/secrets/oidc-client-secret
+            - name: ELODEA_OIDC_REDIRECT_URL
+              value: {{ required "oidc.redirectURL is required when oidc.enabled" .Values.oidc.redirectURL | quote }}
+            {{- with .Values.oidc.providerName }}
+            - name: ELODEA_OIDC_PROVIDER_NAME
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.oidc.scopes }}
+            - name: ELODEA_OIDC_SCOPES
+              value: {{ join "," . | quote }}
+            {{- end }}
+            {{- with .Values.oidc.groupsClaim }}
+            - name: ELODEA_OIDC_GROUPS_CLAIM
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.oidc.identityClaim }}
+            - name: ELODEA_OIDC_IDENTITY_CLAIM
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.oidc.reviewerGroups }}
+            - name: ELODEA_OIDC_REVIEWER_GROUPS
+              value: {{ join "," . | quote }}
+            {{- end }}
+            {{- with .Values.oidc.adminGroups }}
+            - name: ELODEA_OIDC_ADMIN_GROUPS
+              value: {{ join "," . | quote }}
+            {{- end }}
+            {{- with .Values.oidc.sessionTTL }}
+            - name: ELODEA_SESSION_TTL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.oidc.sessionIdleTTL }}
+            - name: ELODEA_SESSION_IDLE_TTL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.oidc.cookieSameSite }}
+            - name: ELODEA_SESSION_COOKIE_SAMESITE
+              value: {{ . | quote }}
+            {{- end }}
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /api/v1/health
+              port: http
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 5
+            failureThreshold: 2
+          startupProbe:
+            httpGet:
+              path: /api/v1/health
+              port: http
+            periodSeconds: 2
+            failureThreshold: 30
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: secrets
+              mountPath: /etc/elodea/secrets
+              readOnly: true
+            {{- if .Values.policies.configMap }}
+            - name: policies
+              mountPath: /app/policies
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: secrets
+          secret:
+            secretName: {{ .Values.secret.name }}
+            defaultMode: 0400
+        {{- if .Values.policies.configMap }}
+        - name: policies
+          configMap:
+            name: {{ .Values.policies.configMap }}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

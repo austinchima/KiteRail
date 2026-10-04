@@ -1,19 +1,19 @@
-# KiteRail
+# Elodea
 
-**KiteRail is an inline policy enforcement proxy for autonomous AI agents.**
+**Elodea is an inline policy enforcement proxy for autonomous AI agents.**
 
-> *KiteRail treats AI agent safety as a systems problem, not a prompt problem. The LLM does one bounded step — deciding what tool to call. Everything safety-critical (policy, routing, audit, human review) is deterministic Go code you can read, diff, and test. If your agent can spend money, that shouldn't depend on how a model was fine-tuned.*
+> *Elodea treats AI agent safety as a systems problem, not a prompt problem. The LLM does one bounded step — deciding what tool to call. Everything safety-critical (policy, routing, audit, human review) is deterministic Go code you can read, diff, and test. If your agent can spend money, that shouldn't depend on how a model was fine-tuned.*
 
 ![Go](https://img.shields.io/badge/Go-1.26%2B-00ADD8?logo=go) ![License](https://img.shields.io/badge/License-Apache_2.0-blue) ![OPA](https://img.shields.io/badge/Policy-OPA_Rego-7d9fc3)
 
 ## Status
-v1.1.0. Looking for design partners running agentic workflows in fintech or DevOps.
+**v1.2.0** is the latest release: signed images, Helm chart, hot-reloadable policy, externally anchorable audit ledger. **`main` adds** single sign-on for reviewers, Slack and webhook notifications for held actions, and the rename from KiteRail to Elodea; these ship as **2.0.0** because the rename changes header, metric and policy-package names (see [CHANGELOG.md](CHANGELOG.md)). Looking for design partners running agentic workflows in fintech or DevOps.
 
 ## The Problem
 
 Autonomous AI agents calling real-world APIs introduce uncontrolled risk. Regulated industries require strict authorization, human-in-the-loop controls for high-risk decisions, and an audit trail proving exactly what happened. Building these controls natively into every agent is error-prone.
 
-KiteRail targets fintech tool-call governance (like refunds and wire transfers) out of the box. The architecture is domain-agnostic: Rego policies work just as well for `kubectl` or HR APIs, but we focus on one vertical first to get the primitives right.
+Elodea targets fintech tool-call governance (like refunds and wire transfers) out of the box. The architecture is domain-agnostic: Rego policies work just as well for `kubectl` or HR APIs, but we focus on one vertical first to get the primitives right.
 
 ## How It Works
 
@@ -24,7 +24,7 @@ flowchart TB
     end
 
     subgraph Ingress["🔐 Ingress Middleware"]
-        M[HTTP Middleware<br/>metrics · CORS · bearer auth]
+        M[HTTP Middleware<br/>metrics · CORS · bearer token / SSO session]
     end
 
     subgraph Control["⚙️ Control Plane · Request + Review"]
@@ -32,12 +32,12 @@ flowchart TB
         P[MCP Interceptor<br/>validate · evaluate · route]
         E[[OPA Policy Engine<br/>compiled Rego · RWMutex]]
         API[Reviewer/Admin REST API<br/>HITL · audit · policy simulation]
-        PS[(Policy Store<br/>immutable Rego files)]
+        PS[(Policy Store<br/>versioned Rego bundle)]
 
         P -- EvalInput --> E
         E -- Decision · allow / deny / quarantine --> P
         API -- dry-run EvalInput --> E
-        PS -. load + compile at startup .-> E
+        PS -. compile + hot reload .-> E
         API -. list policies .-> PS
     end
 
@@ -53,8 +53,10 @@ flowchart TB
 
     subgraph Human["👤 Human Plane"]
         direction TB
-        UI[React Dashboard<br/>HITL inbox · ledger]
+        N[Notifier<br/>Slack · signed webhook]
+        UI[Reviewer console<br/>HITL inbox · ledger · SSO]
         REV[Human Reviewer<br/>approve · deny]
+        N -- held action --> REV
         REV -- review interaction --> UI
     end
 
@@ -74,6 +76,7 @@ flowchart TB
     API -- list + approve / deny --> Q
     W -- claim / status --> Q
     W -- replay approved payload · Idempotency-Key --> T
+    Q -. outbox .-> N
 
     classDef control fill:#1e293b,stroke:#38bdf8,color:#e2e8f0,stroke-width:2px
     classDef data fill:#0f172a,stroke:#a78bfa,color:#e2e8f0,stroke-width:2px
@@ -84,7 +87,7 @@ flowchart TB
 
     class P,E,API,PS,W control
     class L,Q data
-    class UI,REV human
+    class UI,REV,N human
     class M ingress
     class T upstream
     class A agent
@@ -92,25 +95,33 @@ flowchart TB
 
 ## Features
 
-- **Policy Simulator:** Dry-run the `/api/v1/policies/simulate` endpoint to validate agent payload changes before they hit production.
-- **Human-in-the-Loop:** High-risk payloads route to a quarantine queue for human review.
-- **Audit Ledger:** Hash-chained, tamper-detectable Postgres audit log with serial isolation.
-- **OPA Policy Engine:** Declarative Rego rules compiled from immutable policy files at startup, with a dry-run simulation API.
-- **Inline Proxy:** Designed for low-latency JSON-RPC / MCP interception. Requires zero agent code modifications.
+- **Inline enforcement, zero agent changes:** point an MCP client at Elodea instead of the tool server. Every call is validated, decided by policy, ledgered, and only then executed. Anything ambiguous fails closed.
+- **Agents learn from "no":** MCP clients get denials and quarantines as readable tool results (`isError`), so the model adapts instead of crashing on an HTTP error.
+- **Human-in-the-loop that holds up:** high-risk calls wait in a durable queue. Approvals are ledgered, replays are idempotent, and every replay is **re-checked against current policy** before it executes.
+- **Reviewers find out immediately:** held actions are announced in Slack or to a signed webhook (PagerDuty, Opsgenie, your own service) with a link straight to the approval queue. Tool arguments never leave Elodea in a notification.
+- **Approvals tied to real people:** reviewers sign in with your identity provider (Okta, Entra ID, Auth0, Keycloak, any OIDC provider). Roles come from IdP groups, and every approval is recorded under the verified identity.
+- **Audit an auditor will accept:** a SHA-256 hash chain that is append-only in the database. Each entry names the exact policy version that decided it, and the chain head can be anchored externally to prove nothing was truncated. Paginated queries and streaming NDJSON export (for SIEMs) are built in.
+- **Policy as code, live:** OPA/Rego bundles with a dry-run simulator, hot reload (SIGHUP, admin API, or GitOps polling), and automatic rejection of bundles that don't compile.
+- **Ships like infrastructure:** distroless signed images with SBOM and provenance, a hardened Helm chart, file-mounted secrets, Prometheus metrics, and liveness/readiness split for zero-downtime rollouts.
+
+## Built to outlast protocol churn
+
+Agent protocols are moving fast: MCP revisions, agent-to-agent protocols, vendor function-calling APIs. Elodea's job doesn't change when they do. It still decides what an autonomous system is allowed to *do*, records who decided, and makes high-risk actions wait for a human. So the design keeps the protocol at the edge:
+
+- **Adapters normalize, the core decides.** An ingress adapter (`proxy.Adapter`; MCP today) turns wire traffic into one protocol-neutral action. Policy, ledger, quarantine, and replay never see the wire format, so a new protocol is a new adapter, not a rewrite.
+- **A versioned, additive policy input** (`input.schema_version = "elodea.eval/v1"`, plus `protocol` and `protocol_version`). Policies written today keep working, and new protocols or versions can be targeted explicitly when needed.
+- **Smarter agents make it more valuable, not less.** More autonomy means more consequential actions, which means more need for deterministic limits, a human checkpoint, and evidence. Elodea assumes the model can be wrong or compromised and constrains outcomes, not prompts, so its guarantees don't depend on any model's behaviour.
+- **Standards over lock-in:** OPA/Rego for policy, Postgres for state, Prometheus for metrics, OCI and Helm for delivery, and a ledger you can export and verify offline.
 
 ## Quick Start
 
 ```bash
 # Clone the repository
-git clone https://github.com/austinchima/KiteRail.git
-cd KiteRail
+git clone https://github.com/austinchima/KiteRail.git elodea
+cd elodea
 
 # Start all services (proxy + Postgres)
 docker compose up -d
-
-# Compose exposes Postgres as host port 55432 -> container port 5432.
-# In PowerShell, use this DSN when running integration tests from the host:
-$env:KITERAIL_POSTGRES_DSN = "postgres://kiterail:kiterail@localhost:55432/kiterail?sslmode=disable"
 
 # Test the health endpoint
 curl http://localhost:8080/api/v1/health
@@ -125,27 +136,41 @@ curl -X POST http://localhost:8080/ \
 # Approve it as a human reviewer (reviewer token)
 curl -X POST http://localhost:8080/api/v1/quarantine/<id>/approve \
   -H 'Authorization: Bearer sk_reviewer_local_00000000'
-# → The durable worker replays the payload to the target
+# → The durable worker re-checks policy and replays the payload to the target
+
+# Verify the audit chain
+curl -H 'Authorization: Bearer sk_reviewer_local_00000000' http://localhost:8080/api/v1/ledger/verify
 ```
 
-## Local Dashboard
+Compose exposes Postgres on host port `55432`. To run the integration tests from the host, set `ELODEA_POSTGRES_DSN=postgres://elodea:elodea@localhost:55432/elodea?sslmode=disable`.
 
-![KiteRail Dashboard](./assets/dashboard.png)
+## Deploying to production
 
-The included React dashboard provides a real-time human-in-the-loop inbox and an audit ledger view. 
+```bash
+helm install elodea deploy/helm/elodea \
+  --set config.targetURL=https://payments.internal/mcp \
+  --set secret.name=elodea-secrets \
+  --set config.allowedOrigins='{https://elodea.example.com}'
+```
 
-> **Note:** The real-time SSE streaming endpoint for live dashboard updates returns `501 Not Implemented` in v1.0. The React frontend will gracefully fallback without live data until the NATS re-integration lands in v1.1.
+See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for secrets, policy delivery, ledger anchoring, monitoring, and the production checklist. Release images are signed; verify them with the steps in [SECURITY.md](SECURITY.md).
 
-Interested in piloting KiteRail on real agent workflows? I am looking for design partners in fintech or agent-DevOps. Open a [GitHub Discussion](https://github.com/austinchima/KiteRail/discussions).
+## Dashboard
+
+![Elodea Dashboard](./assets/dashboard.png)
+
+The reviewer dashboard (HITL inbox and audit ledger) is part of Elodea Cloud and is developed separately. It doesn't ship in this repository. Everything it does goes through the documented reviewer API ([docs/API.md](docs/API.md)), so you can build your own console, or drive reviews from Slack or a ticketing system, with the same guarantees.
+
+Interested in piloting Elodea on real agent workflows? I am looking for design partners in fintech or agent-DevOps. Open a [GitHub Discussion](https://github.com/austinchima/KiteRail/discussions).
 
 ## Writing Policies
 
-KiteRail uses Open Policy Agent (OPA) for policy evaluation. Policies contribute decisions to a shared `decisions` set. The aggregator in `policies/main.rego` selects the most restrictive action: **deny > quarantine > allow**. Ties at equal severity are broken deterministically (sorted JSON encoding) so evaluation can never produce a conflict.
+Elodea uses Open Policy Agent (OPA) for policy evaluation. Policies contribute decisions to a shared `decisions` set. The aggregator in `policies/main.rego` selects the most restrictive action: **deny > quarantine > allow**. Ties at equal severity are broken deterministically (sorted JSON encoding) so evaluation can never produce a conflict.
 
 Example policy (`policies/fintech/refund_limit.rego`):
 
 ```rego
-package kiterail.authz
+package elodea.authz
 
 import rego.v1
 
@@ -156,7 +181,7 @@ decisions contains {"action": "allow", "rule": "refund_under_limit", "explanatio
 }
 
 # Quarantine refunds over $1,000 for human review
-decisions contains {"action": "quarantine", "rule": "refund_over_limit", "explanation": "Refund exceeds $1,000 threshold — routed to human approval"} if {
+decisions contains {"action": "quarantine", "rule": "refund_over_limit", "explanation": "Refund exceeds the $1,000 autonomous limit. Routed to human approval."} if {
     input.tool == "stripe.charge.refund"
     input.arguments.amount > 1000
 }
@@ -169,49 +194,62 @@ The default-deny behavior is built into the aggregator (`policies/main.rego`). I
 
 ## Configuration
 
-KiteRail is configured via environment variables or a `kiterail.yaml` file.
+Elodea is configured via environment variables or a `elodea.yaml` file.
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `KITERAIL_LISTEN_ADDR` | Address the proxy listens on | `:8080` |
-| `KITERAIL_TARGET_URL` | Upstream target server URL | **required — no default** |
-| `KITERAIL_ALLOWED_ORIGINS` | Comma-separated list of allowed CORS origins | `*` (all origins — set explicit origins in production) |
-| `KITERAIL_POLICY_DIR` | Directory containing `.rego` policies | `./policies` |
-| `KITERAIL_POSTGRES_DSN` | PostgreSQL connection DSN string | `postgres://kiterail:kiterail@localhost:5432/kiterail?sslmode=disable` |
-| `KITERAIL_API_KEYS` | Comma-separated `token:agent_id` pairs for agent (machine) auth | (none — proxy rejects requests if unset) |
-| `KITERAIL_REVIEWER_API_KEYS` | Comma-separated `token:reviewer_id` pairs — humans who approve quarantined actions | (none — server refuses to start without at least one reviewer/admin key) |
-| `KITERAIL_ADMIN_API_KEYS` | Comma-separated `token:admin_id` pairs | (none) |
-| `KITERAIL_TARGET_AUTH_TOKEN` | Service credential presented to the upstream target on forwarded/replayed requests | (none) |
-| `KITERAIL_ENVIRONMENT` | `development` or `production`. Production enforces strict startup validation: no dev credentials, TLS required, no local no-TLS DSN | `development` |
+| `ELODEA_LISTEN_ADDR` | Address the proxy listens on | `:8080` |
+| `ELODEA_TARGET_URL` | Upstream target server URL | **required — no default** |
+| `ELODEA_ALLOWED_ORIGINS` | Comma-separated list of allowed CORS origins | `*` (all origins — set explicit origins in production) |
+| `ELODEA_POLICY_DIR` | Directory containing `.rego` policies | `./policies` |
+| `ELODEA_POSTGRES_DSN` | PostgreSQL connection DSN string | `postgres://elodea:elodea@localhost:5432/elodea?sslmode=disable` |
+| `ELODEA_API_KEYS` | Comma-separated `token:agent_id` pairs for agent (machine) auth | (none — proxy rejects requests if unset) |
+| `ELODEA_REVIEWER_API_KEYS` | Comma-separated `token:reviewer_id` pairs — humans who approve quarantined actions. With SSO these are break-glass access only | (none — the server refuses to start without a reviewer/admin key **or** SSO) |
+| `ELODEA_ADMIN_API_KEYS` | Comma-separated `token:admin_id` pairs | (none) |
+| `ELODEA_TARGET_AUTH_TOKEN` | Service credential presented to the upstream target on forwarded/replayed requests | (none) |
+| `ELODEA_ENVIRONMENT` | `development` or `production`. Production enforces strict startup validation: no dev credentials, tokens ≥ 24 bytes, TLS required, no local no-TLS DSN | `development` |
+| `ELODEA_TLS_TERMINATED_UPSTREAM` | `true` when an ingress/mesh terminates TLS in front of Elodea (satisfies the production TLS check) | `false` |
+| `ELODEA_LOG_LEVEL` | `debug`, `info`, `warn`, `error` | `info` |
+| `ELODEA_POLICY_RELOAD_INTERVAL` | Poll the policy directory and hot-reload changes (`0` disables; SIGHUP and the admin API still work) | `30s` |
+| `ELODEA_METRICS_LISTEN_ADDR` | Serve `/metrics` on a separate internal listener (e.g. `:9090`) | (served on the main port) |
+| `ELODEA_OIDC_ISSUER`, `_CLIENT_ID`, `_CLIENT_SECRET`, `_REDIRECT_URL` | Single sign-on for reviewers and admins. Also `ELODEA_OIDC_REVIEWER_GROUPS`, `_ADMIN_GROUPS`, `_SCOPES`, `_IDENTITY_CLAIM`, `_PROVIDER_NAME`, and `ELODEA_SESSION_TTL` / `_IDLE_TTL`. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md#single-sign-on-for-reviewers) | (SSO off) |
+| `ELODEA_NOTIFY_SLACK_WEBHOOK_URL` | Slack incoming webhook for held-action notifications | (off) |
+| `ELODEA_NOTIFY_WEBHOOK_URL` / `_SECRET` | Generic webhook for held actions, signed with HMAC-SHA256 (secret required in production) | (off) |
+| `ELODEA_CONSOLE_URL` | Where reviewers open the console; notifications link to its approvals queue | (none) |
+| `ELODEA_*_FILE` | File-based variants of `POSTGRES_DSN`, `TARGET_AUTH_TOKEN`, `API_KEYS`, `REVIEWER_API_KEYS`, `ADMIN_API_KEYS`, `OIDC_CLIENT_SECRET`, `NOTIFY_SLACK_WEBHOOK_URL`, `NOTIFY_WEBHOOK_SECRET` (key files: one `token:id` per line) | — |
 
-> **Trust domains are separate.** Agent tokens can only call the proxy. Approving quarantined actions, reading the ledger, and the dashboard require a reviewer/admin token. Sharing a token across domains is rejected at startup.
+> **Trust domains are separate.** Agent tokens can only call the proxy. Approving quarantined actions, reading the ledger, and the dashboard require a reviewer/admin token or an SSO session; agents can never authenticate with a session cookie. Sharing a token across domains, or giving one identity both an agent and a reviewer role, is rejected at startup.
 
-*When both are set, environment variables override values in `kiterail.yaml`.*
+*When both are set, environment variables override values in `elodea.yaml`. Pre-rename `KITERAIL_*` variables still work and log a deprecation warning.*
 
 ## Architecture
 
-KiteRail organizes into six planes (agent, ingress, control, data, human, target) with interface-driven boundaries between packages. New decision engines, storage backends, or verticals can drop in without touching the core proxy.
+Elodea organizes into six planes (agent, ingress, control, data, human, target) with interface-driven boundaries between packages. New decision engines, storage backends, or verticals can drop in without touching the core proxy.
 
 👉 **See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** for the full design, request lifecycle, extension points, and correctness discussion.
 
 ## Roadmap
 
-Two tracks toward v1.1 — the version of KiteRail designed for production pilots:
+Next, in priority order:
 
-- **Protocol abstraction:** Moving beyond MCP to enforce policies on standard REST and gRPC traffic.
-- **Pre-built policy packs:** Ready-to-use OPA rules for common governance requirements.
-- **Two-identity authorization:** Checking both the autonomous agent's identity and the human user's identity (via OAuth/SAML) to enforce strict segregation of duties.
-- **CLI & Metrics:** A dedicated `kiterail` CLI and Prometheus `/metrics` endpoints.
+- **More adapters** on the new adapter boundary: agent-to-agent (A2A) task traffic and function-calling gateways.
+- **Agent identity federation:** OAuth 2.1 / RFC 9728 protected-resource metadata for agents, so Elodea evaluates both the agent and the human it acts for. (Reviewer single sign-on with OIDC has shipped.)
+- **Approve from the notification:** one-click approve and deny from Slack, building on the held-action notifications that have shipped.
+- **Shadow mode** for policy rollouts: record what a new bundle *would* decide without enforcing it.
+- **Pre-built policy packs** for common governance regimes (payments, cloud operations, data egress).
+- **Managed ledger anchoring** to a transparency log on a schedule.
 
 👉 **See [docs/ARCHITECTURE.md#roadmap](docs/ARCHITECTURE.md#roadmap)** for the full engineering and product roadmap.
 
 ## Why not just use...?
 
-| Tool | What it governs | Where KiteRail is different |
+| Tool | What it governs | Where Elodea is different |
 |---|---|---|
-| Cloudflare AI Gateway / Portkey | LLM prompts and responses | KiteRail governs the *tool calls that leave the LLM*. Prompts are safe; refunds are not. |
-| Lakera Guard / NeMo Guardrails | Prompt injection and unsafe outputs | KiteRail assumes the LLM is compromised and firewalls what it can *do*. |
-| OPA + a custom proxy | Same primitives | KiteRail packages the proxy, hash-chained ledger, HITL queue, and wire-format parsing—the parts that are hard to get right under concurrency. |
+| Cloudflare AI Gateway / Portkey | LLM prompts and responses | Elodea governs the *tool calls that leave the LLM*. Prompts are safe; refunds are not. |
+| Docker / Microsoft / Lasso MCP gateways | Routing, isolation, and who may call which MCP server | Elodea adds what they leave out: a separate human approves high-risk calls, the exact approved request runs only after re-checking current policy, and a hash-chained ledger an examiner can verify. Run it behind your gateway. |
+| Auth0 async authorization / Permit consent | A user approving their *own* agent's action | Elodea is four-eyes review: a different, authorized person approves, bound to the exact payload, with tamper-evident evidence. |
+| Lakera Guard / NeMo Guardrails | Prompt injection and unsafe outputs | Elodea assumes the LLM is compromised and firewalls what it can *do*. |
+| OPA + a custom proxy | Same primitives | Elodea packages the proxy, hash-chained ledger, HITL queue, and wire-format parsing—the parts that are hard to get right under concurrency. |
 
 ## Contributing
 

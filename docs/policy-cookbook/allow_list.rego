@@ -1,4 +1,4 @@
-package kiterail.authz
+package elodea.authz
 
 import rego.v1
 

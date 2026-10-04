@@ -19,7 +19,7 @@ vendor/
 .DS_Store
 Thumbs.db
 
-# KiteRail Cloud (private — excluded from public repo)
+# Elodea Cloud (private — excluded from public repo)
 web/
 
 # Agent configs
@@ -45,3 +45,13 @@ skills-lock.json
 .tmp/*
 blog-posts/
 backend/internal/config/config-*.yaml
+
+MVP*.md
+
+# Local AI-session transcripts and diagram exports (not product source)
+/Output.md
+/Phase *.md
+/architecture.html
+/system_architecture_final*
+/elodea.architecture.json
+*.visual-check.*
