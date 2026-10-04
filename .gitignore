@@ -54,4 +54,5 @@ MVP*.md
 /architecture.html
 /system_architecture_final*
 /elodea.architecture.json
+/kiterail.architecture.json
 *.visual-check.*

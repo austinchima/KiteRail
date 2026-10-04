@@ -110,6 +110,24 @@ spec:
             - name: ELODEA_NOTIFY_WEBHOOK_SECRET_FILE
               value: /etc/elodea/secrets/webhook-secret
             {{- end }}
+            {{- if .Values.secret.hasSlackApp }}
+            - name: ELODEA_SLACK_BOT_TOKEN_FILE
+              value: /etc/elodea/secrets/slack-bot-token
+            - name: ELODEA_SLACK_SIGNING_SECRET_FILE
+              value: /etc/elodea/secrets/slack-signing-secret
+            - name: ELODEA_SLACK_CHANNEL_ID
+              value: {{ required "slack.channelID is required when secret.hasSlackApp" .Values.slack.channelID | quote }}
+            - name: ELODEA_SLACK_REVIEWERS
+              value: {{ required "slack.reviewers is required when secret.hasSlackApp" (join "," .Values.slack.reviewers) | quote }}
+            {{- with .Values.slack.teamID }}
+            - name: ELODEA_SLACK_TEAM_ID
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.slack.apiBase }}
+            - name: ELODEA_SLACK_API_BASE
+              value: {{ . | quote }}
+            {{- end }}
+            {{- end }}
             {{- if .Values.oidc.enabled }}
             - name: ELODEA_OIDC_ISSUER
               value: {{ required "oidc.issuer is required when oidc.enabled" .Values.oidc.issuer | quote }}
