@@ -33,62 +33,72 @@ Elodea sits inline between an autonomous agent and any downstream API. It groups
 ```mermaid
 flowchart TB
     subgraph Client["🤖 Agent Plane"]
-        A[Autonomous AI Agent]
+        A[Autonomous AI Agent<br/>MCP client]
     end
 
     subgraph Ingress["🔐 Ingress Middleware"]
         direction LR
-        M1[CORS Middleware] --> M2[Auth<br/>bearer token · SSO session<br/>role-based trust domains]
+        M1[CORS<br/>exact allowed origins] --> M2[Auth<br/>agents: bearer token only<br/>humans: token or SSO session + CSRF]
     end
 
-    subgraph Control["⚙️ Control Plane · Elodea Proxy"]
+    subgraph Control["⚙️ Control Plane"]
         direction TB
-        P[MCP Interceptor<br/>parses tools/call<br/>extracts name + arguments]
-        E[[OPA Policy Engine<br/>Rego evaluator<br/>hot reload, versioned bundle]]
-        SIM[/Policy Simulator<br/>dry-run endpoint/]
-        PS[(Policy Store<br/>./policies/*.rego)]
+        P[MCP Proxy<br/>strict JSON-RPC parse<br/>adapter → normalized action]
+        E[[OPA Policy Engine<br/>allow · deny · hold]]
+        PS[(Policy Bundle<br/>versioned Rego · hot reload)]
+        API[Reviewer API<br/>inbox · approve / deny · ledger · simulate]
+        SA[Slack app<br/>verified Approve / Deny clicks]
+        W[Replay Worker<br/>re-check · write-ahead · run once]
+        N[Notifier<br/>outbox · retries · signed]
         P --> E
-        SIM --> E
-        E -.reads.-> PS
+        PS -. hot reload .-> E
+        API -. dry run .-> E
+        W -- re-check current policy --> E
+        SA -- same decision path --> API
     end
 
     subgraph Data["📒 Data Plane · Postgres"]
         direction LR
-        L[(Audit Ledger<br/>SHA-256 hash-chain<br/>append-only, advisory-locked<br/>externally anchorable)]
-        Q[(Quarantine Store<br/>pending payloads)]
+        L[(Audit Ledger<br/>SHA-256 hash chain<br/>append-only, advisory-locked<br/>externally anchorable)]
+        Q[(Held Actions<br/>payloads · replay state · outbox)]
     end
 
     subgraph Human["👤 Human Plane"]
         direction TB
-        N[Notifier<br/>Slack · signed webhook]
-        UI[Reviewer console<br/>HITL Inbox · Ledger Viewer · SSO]
+        UI[Reviewer console<br/>inbox · audit log · policies]
+        IDP[Identity provider<br/>OIDC · groups → roles]
+        SL[Slack · webhooks]
         REV[Human Reviewer]
-        N --> REV
-        UI <--> REV
+        REV --> UI
+        REV --> SL
+        UI -. sign in .-> IDP
     end
 
     subgraph Upstream["🎯 Target Plane"]
-        T[Downstream API<br/>Stripe · kubectl · EHR · ...]
+        T[Upstream tool server<br/>Stripe · kubectl · EHR · ...]
     end
 
     A -- JSON-RPC / MCP --> M1
-    M2 --> P
+    M2 -- POST / --> P
+    M2 -- /api/v1 --> API
+    UI -- REST --> M1
+    SL -- Slack-signed click --> SA
 
-    E -- ALLOW --> T
-    E -- DENY --> DENIED[403 Forbidden]
-    E -- QUARANTINE --> Q
+    P -- record decision first --> L
+    P -- ALLOW · forward --> T
+    P -- DENY · readable refusal --> A
+    P -- HOLD · store --> Q
 
-    Q --> UI
+    API -- approve / deny --> Q
+    API -- record decision --> L
+    W -- claim approved --> Q
+    W -- write-ahead + outcome --> L
+    W -- replay exact payload once --> T
     Q -. outbox .-> N
-    UI -- approve --> T
-    UI -- deny --> DENIED
-
-    P -- append entry --> L
-    UI -- approve/deny --> L
-
-    UI <-. REST API<br/>/api/v1/{ledger,quarantine,policies,dashboard} .-> Control
-    UI <-. reads .-> L
+    N -- held action --> SL
 ```
+
+An interactive version, with every box linked to its source file, is in [diagrams/architecture-interactive.html](diagrams/architecture-interactive.html).
 
 ### Why these six planes?
 
@@ -179,6 +189,7 @@ flowchart LR
         Q[quarantine<br/>store · handler · replay worker]
         LED[ledger<br/>hash chain · verify · export]
         NOT[notify<br/>outbox · Slack · webhook]
+        SLK[slackapp<br/>verified Approve / Deny]
         DASH[dashboard<br/>stats aggregator]
         DB[db<br/>sqlc queries · migrations]
     end
@@ -195,6 +206,7 @@ flowchart LR
     MAIN --> Q
     MAIN --> SSO
     MAIN --> NOT
+    MAIN --> SLK
     MAIN --> DASH
 
     PROXY -->|OPAEngine iface| OPA
@@ -216,6 +228,9 @@ flowchart LR
     DB --> PG
     SSO --> IDP
     NOT --> HOOK
+    SLK -->|Decider iface| Q
+    SLK -->|notify.Channel| NOT
+    SLK --> HOOK
 ```
 
 ### Design rules the layout enforces
